@@ -1,0 +1,35 @@
+# Docker Compose - Development Mode
+# Usage: docker-compose -f docker-compose.dev.yml up -d
+
+version: '3.8'
+
+services:
+  # PostgreSQL Database (only)
+  postgres:
+    image: postgres:16-alpine
+    container_name: layout_postgres_dev
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_NAME:-layout_app}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-devpassword}
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data
+      - ./public/database_schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+    ports:
+      - "${DB_PORT:-5432}:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-layout_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - dev_network
+
+volumes:
+  postgres_data_dev:
+    driver: local
+
+networks:
+  dev_network:
+    driver: bridge
