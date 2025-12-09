@@ -1,7 +1,6 @@
 # Docker Compose - Layout Manager Application
 # Usage: docker-compose up -d
 
-version: '3.8'
 
 services:
   # PostgreSQL Database (optional - can use external PostgreSQL)
