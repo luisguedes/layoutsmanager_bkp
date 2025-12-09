@@ -1,48 +1,71 @@
+# docker-compose.easypanel.yml
+# Stack completa para usar no Easypanel:
+# - PostgreSQL
+# - Backend (Node/Express)
+# - Frontend (Vite + Nginx com proxy /api)
+
 services:
   postgres:
-    image: postgres:16
-    restart: always
+    image: postgres:16-alpine
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_NAME}
-      POSTGRES_USER: ${DB_USER}
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME:-layout_app}
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?Database password is required}
+      PGDATA: /var/lib/postgresql/data/pgdata
     volumes:
       - postgres_data:/var/lib/postgresql/data
-    expose:
-      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-layout_app}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - app_network
 
   backend:
     build:
-      context: ./backend
-      dockerfile: Dockerfile
-    restart: always
+      context: .
+      dockerfile: docker/backend.Dockerfile
+    restart: unless-stopped
     depends_on:
-      - postgres
+      postgres:
+        condition: service_healthy
     environment:
-      NODE_ENV: production
+      NODE_ENV: ${NODE_ENV:-production}
+      API_PORT: 3001
       DB_HOST: postgres
       DB_PORT: 5432
-      DB_USER: ${DB_USER}
-      DB_PASSWORD: ${DB_PASSWORD}
-      DB_NAME: ${DB_NAME}
-      JWT_SECRET: ${VITE_JWT_SECRET}
-      API_PORT: 3001
+      DB_NAME: ${DB_NAME:-layout_app}
+      DB_USER: ${DB_USER:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:?Database password is required}
+      DB_SSL: ${DB_SSL:-false}
+      VITE_JWT_SECRET: ${VITE_JWT_SECRET:?JWT secret is required}
+      CORS_ORIGIN: ${CORS_ORIGIN:-*}
     expose:
       - "3001"
+    networks:
+      - app_network
 
   frontend:
     build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    restart: always
+      context: .
+      dockerfile: docker/frontend.Dockerfile
+      args:
+        VITE_API_URL: ${VITE_API_URL:-/api}
+        VITE_DOCKER: "true"
+    restart: unless-stopped
     depends_on:
       - backend
-    environment:
-      VITE_API_URL: "/api"
-      NODE_ENV: production
     expose:
       - "80"
+    networks:
+      - app_network
 
 volumes:
   postgres_data:
     driver: local
+
+networks:
+  app_network:
+    driver: bridge
