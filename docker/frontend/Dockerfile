@@ -31,7 +31,8 @@ RUN npm run build
 FROM nginx:alpine AS production
 
 # Copy custom nginx config
-#COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf
+#COPY docker/nginx/nginx.conf /etc/nginx/nginx.conf --descomentar para subir fora do easypanel
+COPY docker/nginx/default.conf /etc/nginx/conf.d/default.conf
 
 # Copy built assets
 COPY --from=builder /app/dist /usr/share/nginx/html
