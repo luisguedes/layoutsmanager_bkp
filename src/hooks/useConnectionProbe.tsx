@@ -113,13 +113,26 @@ export const useConnectionProbe = (
     }
   }, [config, apiUrl, onStatusChange, status]);
 
-  // Start/stop auto-probing
+  // Stop auto-probing once connected successfully
   useEffect(() => {
+    if (status.status === 'connected' && intervalRef.current) {
+      clearInterval(intervalRef.current);
+      intervalRef.current = null;
+    }
+  }, [status.status]);
+
+  // Start auto-probing only until first successful connection
+  useEffect(() => {
+    // Don't start auto-probing if already connected
+    if (status.status === 'connected') {
+      return;
+    }
+
     if (enabled && interval > 0 && config?.password) {
       // Initial probe
       probe();
       
-      // Setup interval
+      // Setup interval for retries until connected
       intervalRef.current = setInterval(() => {
         probe();
       }, interval);
@@ -134,7 +147,7 @@ export const useConnectionProbe = (
         abortControllerRef.current.abort();
       }
     };
-  }, [enabled, interval, config?.host, config?.port, config?.password, probe]);
+  }, [enabled, interval, config?.host, config?.port, config?.password]);
 
   const reset = useCallback(() => {
     setStatus({ status: 'idle' });

@@ -13,7 +13,6 @@ RUN npm ci
 COPY server/ ./server/
 COPY src/lib/ ./src/lib/
 COPY tsconfig.json ./
-COPY public ./public
 
 # Production stage
 FROM node:20-alpine AS production
@@ -27,6 +26,9 @@ RUN npm ci --omit=dev && npm cache clean --force
 # Copy server code
 COPY --from=builder /app/server ./server
 COPY --from=builder /app/src/lib ./src/lib
+
+# Copy schema SQL
+COPY public ./public
 
 # Create non-root user for security
 RUN addgroup -g 1001 -S nodejs && \
