@@ -13,6 +13,7 @@ RUN npm ci
 COPY server/ ./server/
 COPY src/lib/ ./src/lib/
 COPY tsconfig.json ./
+COPY public ./public
 
 # Production stage
 FROM node:20-alpine AS production
