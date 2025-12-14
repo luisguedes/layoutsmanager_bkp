@@ -4,7 +4,9 @@ import { ConnectionStatusBadge } from './ConnectionStatusBadge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
-import { RefreshCw, Server, Database, Activity, Zap } from 'lucide-react';
+import { Switch } from '@/components/ui/switch';
+import { Label } from '@/components/ui/label';
+import { RefreshCw, Server, Database, Activity, Zap, RotateCw } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface LiveConnectionMonitorProps {
@@ -28,10 +30,13 @@ export const LiveConnectionMonitor = ({
 }: LiveConnectionMonitorProps) => {
   const [probeCount, setProbeCount] = useState(0);
   const [lastSuccessTime, setLastSuccessTime] = useState<Date | null>(null);
+  const [autoRetryEnabled, setAutoRetryEnabled] = useState(autoProbeInterval > 0);
 
   const handleStatusChange = (newStatus: ConnectionStatus) => {
     if (newStatus.status === 'connected') {
       setLastSuccessTime(new Date());
+      // Desativa auto-retry após conexão bem-sucedida
+      setAutoRetryEnabled(false);
       onConnectionSuccess?.(newStatus);
     } else if (newStatus.status === 'failed') {
       onConnectionFailed?.(newStatus);
@@ -41,13 +46,21 @@ export const LiveConnectionMonitor = ({
   const { status, isProbing, probe, reset } = useConnectionProbe(config, {
     apiUrl,
     enabled,
-    interval: autoProbeInterval,
+    interval: autoRetryEnabled ? autoProbeInterval : 0,
     onStatusChange: handleStatusChange,
   });
 
   const handleManualProbe = async () => {
     setProbeCount(prev => prev + 1);
     await probe();
+  };
+
+  const handleAutoRetryToggle = (checked: boolean) => {
+    setAutoRetryEnabled(checked);
+    if (checked) {
+      // Inicia uma probe imediatamente ao ativar
+      probe();
+    }
   };
 
   // Calculate connection quality based on latency
@@ -118,6 +131,32 @@ export const LiveConnectionMonitor = ({
         {status.status === 'connected' && status.version && (
           <div className="text-xs text-muted-foreground bg-muted/50 p-2 rounded truncate">
             {status.version.split('(')[0]}
+          </div>
+        )}
+
+        {/* Auto-retry Toggle */}
+        {autoProbeInterval > 0 && hasConfig && (
+          <div className="flex items-center justify-between p-2 rounded bg-muted/30 border">
+            <div className="flex items-center gap-2">
+              <RotateCw className={cn(
+                "h-4 w-4",
+                autoRetryEnabled && isProbing ? "animate-spin text-primary" : "text-muted-foreground"
+              )} />
+              <Label htmlFor="auto-retry" className="text-sm cursor-pointer">
+                Auto-retry
+              </Label>
+              {autoRetryEnabled && (
+                <span className="text-xs text-muted-foreground">
+                  (a cada {Math.round(autoProbeInterval / 1000)}s)
+                </span>
+              )}
+            </div>
+            <Switch
+              id="auto-retry"
+              checked={autoRetryEnabled}
+              onCheckedChange={handleAutoRetryToggle}
+              disabled={isProbing}
+            />
           </div>
         )}
 

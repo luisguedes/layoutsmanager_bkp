@@ -9,6 +9,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
 import { Settings, Database, User, Building2, CheckCircle, Download, Loader2, CheckCircle2, AlertCircle, BookOpen, Cloud, Server, Container, Globe, Wifi, WifiOff, Activity, RefreshCw } from "lucide-react";
+import { maskCNPJ, maskPhone } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -428,7 +429,7 @@ const Setup = () => {
         description: "Sistema configurado com sucesso. Redirecionando...",
       });
 
-      setTimeout(() => navigate("/"), 2000);
+      setTimeout(() => navigate("/dashboard"), 2000);
     } catch (error: any) {
       console.error("Erro no setup:", error);
       toast({
@@ -742,7 +743,11 @@ const Setup = () => {
                         <FormItem>
                           <FormLabel>Telefone</FormLabel>
                           <FormControl>
-                            <Input placeholder="(11) 98765-4321" {...field} />
+                            <Input 
+                              placeholder="(11) 98765-4321" 
+                              {...field}
+                              onChange={(e) => field.onChange(maskPhone(e.target.value))}
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
@@ -1121,7 +1126,11 @@ const Setup = () => {
                       <FormItem>
                         <FormLabel>CNPJ</FormLabel>
                         <FormControl>
-                          <Input placeholder="00.000.000/0000-00" {...field} />
+                          <Input 
+                            placeholder="00.000.000/0000-00" 
+                            {...field}
+                            onChange={(e) => field.onChange(maskCNPJ(e.target.value))}
+                          />
                         </FormControl>
                         <FormMessage />
                       </FormItem>
@@ -1150,7 +1159,11 @@ const Setup = () => {
                         <FormItem>
                           <FormLabel>Telefone</FormLabel>
                           <FormControl>
-                            <Input placeholder="(11) 3333-4444" {...field} />
+                            <Input 
+                              placeholder="(11) 3333-4444" 
+                              {...field}
+                              onChange={(e) => field.onChange(maskPhone(e.target.value))}
+                            />
                           </FormControl>
                           <FormMessage />
                         </FormItem>
