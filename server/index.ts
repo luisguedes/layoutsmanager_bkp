@@ -1212,25 +1212,59 @@ app.get('/api/check-schema', async (req, res) => {
   try {
     const db = getDatabase();
     
-    // Verificar se as tabelas principais existem
-    const result = await db.query(`
+    // Verificar se as tabelas principais existem (12 tabelas no total)
+    const tablesResult = await db.query(`
       SELECT COUNT(*) as count
       FROM information_schema.tables 
       WHERE table_schema = 'public' 
-      AND table_name IN ('profiles', 'user_credentials', 'clientes', 'modelos', 'tipos_impressao', 'campos', 'layouts')
+      AND table_name IN (
+        'profiles', 'user_credentials', 'user_roles', 'user_permissions',
+        'clientes', 'modelos', 'tipos_impressao', 'campos', 
+        'layouts', 'layout_campos', 'audit_log', 'system_config'
+      )
     `);
     
-    const tablesCount = parseInt(result.rows[0].count);
-    const schemaInstalled = tablesCount >= 7; // Todas as 7 tabelas principais devem existir
+    const tablesCount = parseInt(tablesResult.rows[0].count);
+    const schemaInstalled = tablesCount >= 10; // Mínimo de 10 tabelas principais devem existir
+    
+    // Verificar se existem usuários no banco
+    let usersCount = 0;
+    let hasAdmin = false;
+    
+    if (schemaInstalled) {
+      try {
+        const usersResult = await db.query('SELECT COUNT(*) as count FROM profiles');
+        usersCount = parseInt(usersResult.rows[0].count);
+        
+        // Verificar se existe pelo menos um admin
+        const adminResult = await db.query(`
+          SELECT COUNT(*) as count FROM user_roles WHERE role = 'admin'
+        `);
+        hasAdmin = parseInt(adminResult.rows[0].count) > 0;
+      } catch (e) {
+        // Tabelas podem existir mas ainda não ter dados
+        console.log('⚠️ [CHECK-SCHEMA] Erro ao verificar usuários:', e);
+      }
+    }
+    
+    // Sistema está instalado se: schema existe E há pelo menos um admin
+    const isFullyInstalled = schemaInstalled && hasAdmin;
     
     res.json({
-      installed: schemaInstalled,
-      tablesFound: tablesCount
+      installed: isFullyInstalled,
+      schemaInstalled,
+      tablesFound: tablesCount,
+      usersCount,
+      hasAdmin
     });
   } catch (error: any) {
     // Se der erro de conexão ou banco não existe, schema não está instalado
     res.json({
       installed: false,
+      schemaInstalled: false,
+      tablesFound: 0,
+      usersCount: 0,
+      hasAdmin: false,
       error: error.message
     });
   }
@@ -1285,21 +1319,7 @@ app.post('/api/install-schema', async (req, res) => {
       throw new Error(`Erro SQL: ${sqlError.message}`);
     }
     
-    // Criar tabela user_credentials
-    console.log('🔐 Criando tabela user_credentials...');
-    try {
-      await db.query(`
-        CREATE TABLE IF NOT EXISTS public.user_credentials (
-          user_id UUID PRIMARY KEY REFERENCES public.profiles(id) ON DELETE CASCADE,
-          password_hash TEXT NOT NULL,
-          created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
-        );
-      `);
-      console.log('✅ Tabela user_credentials criada');
-    } catch (credError: any) {
-      console.error('❌ Erro ao criar user_credentials:', credError.message);
-      throw credError;
-    }
+    // Tabela user_credentials já está incluída no schema principal
     
     // Verificar se as tabelas foram criadas
     console.log('🔍 Verificando tabelas criadas...');

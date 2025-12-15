@@ -1,68 +1,103 @@
 import { useQuery } from "@tanstack/react-query";
-import { getApiUrl, isDockerEnvironment } from "@/lib/config";
+import { getApiUrl } from "@/lib/config";
 
-export const useSetupStatus = () => {
-  const { data: setupCompleted, isLoading } = useQuery({
+interface SetupStatusDetails {
+  schemaInstalled: boolean;
+  tablesFound: number;
+  usersCount: number;
+  hasAdmin: boolean;
+  error?: string;
+}
+
+interface SetupStatusResult {
+  setupCompleted: boolean;
+  isLoading: boolean;
+  statusDetails: SetupStatusDetails | null;
+}
+
+export const useSetupStatus = (): SetupStatusResult => {
+  const { data, isLoading } = useQuery({
     queryKey: ["setupStatus"],
-    queryFn: async () => {
+    queryFn: async (): Promise<{ completed: boolean; details: SetupStatusDetails }> => {
       try {
-        // First check localStorage for quick response
-        const localSetupCompleted = localStorage.getItem('setup_completed') === 'true';
-        
-        // In Docker, if we have localStorage flag, trust it initially
-        // This prevents the check-schema call from failing during initial setup
-        if (isDockerEnvironment() && !localSetupCompleted) {
-          console.log('🐳 [SETUP-STATUS] Docker detectado, setup não concluído localmente');
-          return false;
-        }
-        
-        console.log('🔍 [SETUP-STATUS] Verificando schema...');
+        console.log('🔍 [SETUP-STATUS] Verificando schema no servidor...');
         
         const API_URL = getApiUrl();
         const response = await fetch(`${API_URL}/check-schema`, {
-          // Add timeout to prevent long waits
-          signal: AbortSignal.timeout(5000),
+          signal: AbortSignal.timeout(10000),
         });
         
         if (!response.ok) {
           console.log('⚠️ [SETUP-STATUS] Servidor retornou erro, assumindo setup não completo');
-          return false;
+          return {
+            completed: false,
+            details: { schemaInstalled: false, tablesFound: 0, usersCount: 0, hasAdmin: false }
+          };
         }
         
         const data = await response.json();
         
         console.log('📊 [SETUP-STATUS] Resposta do servidor:', data);
         
-        // If schema is installed, setup is complete
+        const details: SetupStatusDetails = {
+          schemaInstalled: data.schemaInstalled ?? false,
+          tablesFound: data.tablesFound ?? 0,
+          usersCount: data.usersCount ?? 0,
+          hasAdmin: data.hasAdmin ?? false,
+          error: data.error
+        };
+        
+        // Setup is complete if: schema installed AND has admin user
         if (data.installed) {
-          console.log('✅ [SETUP-STATUS] Schema instalado');
+          console.log('✅ [SETUP-STATUS] Sistema instalado (schema + admin)');
           localStorage.setItem('setup_completed', 'true');
-          return true;
+          return { completed: true, details };
         }
         
-        // Schema is not installed, clear localStorage
-        console.log('❌ [SETUP-STATUS] Schema NÃO instalado');
+        // Schema is not fully installed
+        console.log('❌ [SETUP-STATUS] Setup NÃO completo:', {
+          schemaInstalled: details.schemaInstalled,
+          hasAdmin: details.hasAdmin,
+          usersCount: details.usersCount
+        });
         localStorage.removeItem('setup_completed');
         localStorage.removeItem('auth_token');
-        return false;
+        return { completed: false, details };
       } catch (error) {
-        // If backend is not available, check localStorage as fallback
         console.error('❌ [SETUP-STATUS] Erro ao verificar:', error);
         
-        // In Docker environment with connection error, assume setup needed
-        if (isDockerEnvironment()) {
-          console.log('🐳 [SETUP-STATUS] Docker: erro de conexão, setup necessário');
-          return false;
+        // On connection error, check localStorage as fallback
+        // but only trust it if it says setup IS completed
+        const localFlag = localStorage.getItem('setup_completed') === 'true';
+        if (localFlag) {
+          console.log('⚠️ [SETUP-STATUS] Usando cache local (setup_completed=true)');
+          return {
+            completed: true,
+            details: { schemaInstalled: true, tablesFound: 7, usersCount: 1, hasAdmin: true }
+          };
         }
         
-        // For non-Docker, check localStorage
-        return localStorage.getItem('setup_completed') === 'true';
+        // If no local flag or connection error, assume not setup
+        return {
+          completed: false,
+          details: { schemaInstalled: false, tablesFound: 0, usersCount: 0, hasAdmin: false, error: String(error) }
+        };
       }
     },
-    retry: 0, // Don't retry to avoid delays
-    staleTime: 0,
+    retry: 1,
+    staleTime: 30000, // Cache for 30 seconds
+    refetchOnWindowFocus: false,
   });
 
-  console.log('🎯 [SETUP-STATUS] Resultado final:', { setupCompleted, isLoading });
-  return { setupCompleted: setupCompleted ?? false, isLoading };
+  console.log('🎯 [SETUP-STATUS] Resultado final:', { 
+    setupCompleted: data?.completed, 
+    isLoading,
+    statusDetails: data?.details 
+  });
+  
+  return { 
+    setupCompleted: data?.completed ?? false, 
+    isLoading,
+    statusDetails: data?.details ?? null
+  };
 };
