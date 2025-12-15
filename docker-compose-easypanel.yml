@@ -79,7 +79,7 @@ services:
         VITE_SUPABASE_URL: ${VITE_SUPABASE_URL:-}
         VITE_SUPABASE_PUBLISHABLE_KEY: ${VITE_SUPABASE_PUBLISHABLE_KEY:-}
         VITE_SUPABASE_PROJECT_ID: ${VITE_SUPABASE_PROJECT_ID:-}
-    container_name: layout_frontend
+    #container_name: layout_frontend
     restart: unless-stopped
     depends_on:
       - backend
