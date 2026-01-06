@@ -1,4 +1,4 @@
-import { Home, Users, FileText, Printer, Tag, Layout, History, UserCog } from "lucide-react";
+import { Home, Users, FileText, Printer, Tag, Layout, History, Settings, Building2 } from "lucide-react";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { NavLink } from "react-router-dom";
 import {
@@ -22,16 +22,34 @@ const menuItems = [
   { title: "Histórico", url: "/historico", icon: History },
 ];
 
-export function AppSidebar() {
+interface AppSidebarProps {
+  companyLogo?: string;
+  companyName?: string;
+}
+
+export function AppSidebar({ companyLogo, companyName }: AppSidebarProps) {
   const { isAdmin } = useIsAdmin();
 
   return (
     <Sidebar>
       <SidebarContent>
         <div className="px-6 py-4">
-          <h2 className="text-xl font-bold text-sidebar-foreground">
-            Layout Manager
-          </h2>
+          {companyLogo ? (
+            <div className="flex items-center gap-3">
+              <img 
+                src={companyLogo} 
+                alt={companyName || "Logo"} 
+                className="h-10 w-10 object-contain rounded"
+              />
+              <h2 className="text-lg font-bold text-sidebar-foreground truncate">
+                {companyName || "Layout Manager"}
+              </h2>
+            </div>
+          ) : (
+            <h2 className="text-xl font-bold text-sidebar-foreground">
+              {companyName || "Layout Manager"}
+            </h2>
+          )}
         </div>
         
         <SidebarGroup>
@@ -60,15 +78,15 @@ export function AppSidebar() {
                 <SidebarMenuItem>
                   <SidebarMenuButton asChild>
                     <NavLink
-                      to="/usuarios"
+                      to="/configuracoes"
                       className={({ isActive }) =>
                         isActive
                           ? "bg-sidebar-accent text-sidebar-accent-foreground"
                           : ""
                       }
                     >
-                      <UserCog className="h-4 w-4" />
-                      <span>Usuários</span>
+                      <Settings className="h-4 w-4" />
+                      <span>Configurações</span>
                     </NavLink>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
