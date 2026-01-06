@@ -14,6 +14,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { getApiUrl } from "@/lib/config";
+import { maskPhone, unmask } from "@/lib/utils";
 
 const API_URL = getApiUrl();
 
@@ -40,7 +41,7 @@ export function EditUserDialog({
   const [formData, setFormData] = useState({
     nome: user.nome || "",
     email: user.email || "",
-    telefone: user.telefone || "",
+    telefone: maskPhone(user.telefone || ""),
     cargo: user.cargo || "",
   });
   const [newPassword, setNewPassword] = useState("");
@@ -51,7 +52,7 @@ export function EditUserDialog({
     setFormData({
       nome: user.nome || "",
       email: user.email || "",
-      telefone: user.telefone || "",
+      telefone: maskPhone(user.telefone || ""),
       cargo: user.cargo || "",
     });
     setNewPassword("");
@@ -61,14 +62,19 @@ export function EditUserDialog({
 
   const updateUserMutation = useMutation({
     mutationFn: async () => {
-      // Atualizar dados do perfil
+      // Atualizar dados do perfil - remove máscara do telefone antes de salvar
+      const dataToSave = {
+        ...formData,
+        telefone: unmask(formData.telefone),
+      };
+      
       const response = await fetch(`${API_URL}/usuarios/${user.id}`, {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${session?.token}`,
         },
-        body: JSON.stringify(formData),
+        body: JSON.stringify(dataToSave),
       });
 
       if (!response.ok) throw new Error('Erro ao atualizar usuário');
@@ -169,7 +175,7 @@ export function EditUserDialog({
               id="telefone"
               value={formData.telefone}
               onChange={(e) =>
-                setFormData({ ...formData, telefone: e.target.value })
+                setFormData({ ...formData, telefone: maskPhone(e.target.value) })
               }
               placeholder="(00) 00000-0000"
             />
