@@ -15,7 +15,7 @@ import Tipos from "./pages/Tipos";
 import Campos from "./pages/Campos";
 import Layouts from "./pages/Layouts";
 import Historico from "./pages/Historico";
-import Usuarios from "./pages/Usuarios";
+import Configuracoes from "./pages/Configuracoes";
 import Auth from "./pages/Auth";
 import Setup from "./pages/Setup";
 import NotFound from "./pages/NotFound";
@@ -47,7 +47,7 @@ function App() {
                           <Route path="/campos" element={<Campos />} />
                           <Route path="/layouts" element={<Layouts />} />
                           <Route path="/historico" element={<Historico />} />
-                          <Route path="/usuarios" element={<AdminRoute><Usuarios /></AdminRoute>} />
+                          <Route path="/configuracoes" element={<AdminRoute><Configuracoes /></AdminRoute>} />
                           {/* ADD ALL CUSTOM ROUTES ABOVE THE CATCH-ALL "*" ROUTE */}
                           <Route path="*" element={<NotFound />} />
                         </Routes>
