@@ -5,6 +5,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { fileURLToPath } from 'url';
 import { config } from 'dotenv';
+import { HttpsProxyAgent } from 'https-proxy-agent';
 import { initializeDatabase, query, getDatabase } from '../src/lib/db';
 import { login, signup, getCurrentUser } from '../src/lib/auth';
 import { apiConfig, validateConfig, logConfig } from './config';
@@ -1050,6 +1051,26 @@ app.post('/api/test-connection', async (req, res) => {
   }
 });
 
+// ==================== AUDIT LOGS ====================
+app.get('/api/audit-logs', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const limit = parseInt(req.query.limit as string) || 50;
+    
+    const result = await query(`
+      SELECT al.*, p.nome as profile_nome
+      FROM audit_log al
+      LEFT JOIN profiles p ON al.changed_by = p.id
+      ORDER BY al.changed_at DESC
+      LIMIT $1
+    `, [limit]);
+    
+    res.json(result.rows);
+  } catch (error: any) {
+    console.error('Erro ao buscar audit logs:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // Rota para salvar configuração do banco em .env.local
 app.post('/api/save-db-config', async (req, res) => {
   console.log('\n💾 [SAVE-CONFIG] Salvando configurações do banco...');
@@ -1099,6 +1120,209 @@ VITE_JWT_SECRET=${crypto.randomBytes(32).toString('hex')}
   }
 });
 
+// ==================== CONFIGURAÇÃO DE PROXY ====================
+// Função helper para obter configuração de proxy do banco
+const getProxyConfig = async () => {
+  try {
+    const result = await query(
+      `SELECT value FROM system_config WHERE key = 'proxy_config'`
+    );
+    if (result.rows.length > 0) {
+      return result.rows[0].value;
+    }
+    return { enabled: false };
+  } catch (error) {
+    console.error('Erro ao buscar config de proxy:', error);
+    return { enabled: false };
+  }
+};
+
+// Função helper para criar agent de proxy
+const createProxyAgent = async (): Promise<HttpsProxyAgent<string> | null> => {
+  const proxyConfig = await getProxyConfig();
+  
+  if (!proxyConfig.enabled || !proxyConfig.host || !proxyConfig.port) {
+    return null;
+  }
+  
+  // Montar URL do proxy
+  let proxyUrl = `${proxyConfig.protocol || 'http'}://`;
+  
+  if (proxyConfig.username && proxyConfig.password) {
+    proxyUrl += `${encodeURIComponent(proxyConfig.username)}:${encodeURIComponent(proxyConfig.password)}@`;
+  }
+  
+  proxyUrl += `${proxyConfig.host}:${proxyConfig.port}`;
+  
+  console.log(`🔌 [PROXY] Usando proxy: ${proxyConfig.protocol}://${proxyConfig.host}:${proxyConfig.port}`);
+  
+  return new HttpsProxyAgent(proxyUrl);
+};
+
+// Buscar configuração de proxy
+app.get('/api/config/proxy', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const config = await getProxyConfig();
+    res.json(config);
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Salvar configuração de proxy
+app.post('/api/config/proxy', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const { enabled, host, port, username, password, protocol } = req.body;
+    
+    const config = {
+      enabled: enabled || false,
+      host: host || '',
+      port: port || '',
+      username: username || '',
+      password: password || '',
+      protocol: protocol || 'http',
+    };
+    
+    // Verificar se já existe
+    const existing = await query(`SELECT id FROM system_config WHERE key = 'proxy_config'`);
+    
+    if (existing.rows.length > 0) {
+      await query(
+        `UPDATE system_config SET value = $1, updated_at = NOW() WHERE key = 'proxy_config'`,
+        [JSON.stringify(config)]
+      );
+    } else {
+      await query(
+        `INSERT INTO system_config (key, value) VALUES ('proxy_config', $1)`,
+        [JSON.stringify(config)]
+      );
+    }
+    
+    console.log('✅ [PROXY-CONFIG] Configuração de proxy salva');
+    res.json({ success: true, config });
+  } catch (error: any) {
+    console.error('❌ [PROXY-CONFIG] Erro ao salvar:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Testar conexão de proxy
+app.post('/api/config/proxy/test', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const { enabled, host, port, username, password, protocol } = req.body;
+    
+    if (!enabled || !host || !port) {
+      return res.json({ success: false, message: 'Configuração de proxy incompleta' });
+    }
+    
+    // Montar URL do proxy
+    let proxyUrl = `${protocol || 'http'}://`;
+    if (username && password) {
+      proxyUrl += `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`;
+    }
+    proxyUrl += `${host}:${port}`;
+    
+    console.log(`🔌 [PROXY-TEST] Testando proxy: ${protocol}://${host}:${port}`);
+    
+    try {
+      const agent = new HttpsProxyAgent(proxyUrl);
+      
+      // Teste através do proxy
+      const testResponse = await fetch('https://httpbin.org/ip', {
+        // @ts-ignore - agent é suportado pelo node-fetch
+        agent,
+        signal: AbortSignal.timeout(15000),
+      });
+      
+      if (testResponse.ok) {
+        const data = await testResponse.json();
+        res.json({ 
+          success: true, 
+          message: `Conexão estabelecida via proxy. IP externo: ${data.origin}` 
+        });
+      } else {
+        res.json({ success: false, message: 'Não foi possível verificar a conexão' });
+      }
+    } catch (fetchError: any) {
+      console.error('❌ [PROXY-TEST] Erro no fetch:', fetchError);
+      res.json({ 
+        success: false, 
+        message: `Erro ao conectar: ${fetchError.message}` 
+      });
+    }
+  } catch (error: any) {
+    console.error('❌ [PROXY-TEST] Erro:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
+// ==================== CONFIGURAÇÃO DA EMPRESA ====================
+// Buscar configuração da empresa
+app.get('/api/config/company', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const result = await query(`SELECT value FROM system_config WHERE key = 'company_config'`);
+    if (result.rows.length > 0) {
+      res.json(result.rows[0].value);
+    } else {
+      res.json({
+        nome: "",
+        razao_social: "",
+        cnpj: "",
+        endereco: "",
+        cidade: "",
+        uf: "",
+        cep: "",
+        telefone: "",
+        email: "",
+        logo: "",
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Salvar configuração da empresa
+app.post('/api/config/company', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const { nome, razao_social, cnpj, endereco, cidade, uf, cep, telefone, email, logo } = req.body;
+    
+    const config = {
+      nome: nome || '',
+      razao_social: razao_social || '',
+      cnpj: cnpj || '',
+      endereco: endereco || '',
+      cidade: cidade || '',
+      uf: uf || '',
+      cep: cep || '',
+      telefone: telefone || '',
+      email: email || '',
+      logo: logo || '',
+    };
+    
+    // Verificar se já existe
+    const existing = await query(`SELECT id FROM system_config WHERE key = 'company_config'`);
+    
+    if (existing.rows.length > 0) {
+      await query(
+        `UPDATE system_config SET value = $1, updated_at = NOW() WHERE key = 'company_config'`,
+        [JSON.stringify(config)]
+      );
+    } else {
+      await query(
+        `INSERT INTO system_config (key, value) VALUES ('company_config', $1)`,
+        [JSON.stringify(config)]
+      );
+    }
+    
+    console.log('✅ [COMPANY-CONFIG] Configuração da empresa salva');
+    res.json({ success: true, config });
+  } catch (error: any) {
+    console.error('❌ [COMPANY-CONFIG] Erro ao salvar:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== CONSULTAR CNPJ ====================
 app.post('/api/consultar-cnpj', authenticate, async (req: any, res) => {
   try {
@@ -1115,8 +1339,21 @@ app.post('/api/consultar-cnpj', authenticate, async (req: any, res) => {
       return res.status(400).json({ error: 'CNPJ deve ter 14 dígitos' });
     }
 
-    // Consulta na API ReceitaWS (gratuita)
-    const response = await fetch(`https://www.receitaws.com.br/v1/cnpj/${cnpjLimpo}`);
+    // Buscar configuração de proxy
+    const proxyAgent = await createProxyAgent();
+    
+    console.log(`🔍 [CNPJ] Consultando CNPJ: ${cnpjLimpo}${proxyAgent ? ' (via proxy)' : ''}`);
+
+    // Consulta na API ReceitaWS (gratuita) com suporte a proxy
+    const fetchOptions: any = {
+      signal: AbortSignal.timeout(30000),
+    };
+    
+    if (proxyAgent) {
+      fetchOptions.agent = proxyAgent;
+    }
+    
+    const response = await fetch(`https://www.receitaws.com.br/v1/cnpj/${cnpjLimpo}`, fetchOptions);
     
     if (!response.ok) {
       throw new Error('Erro ao consultar CNPJ');
