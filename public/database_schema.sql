@@ -3,7 +3,17 @@
 -- ============================================
 -- Este arquivo contém todas as estruturas necessárias
 -- para deploy do sistema em banco PostgreSQL externo
--- Versão: 2.0 - Atualizado em 2025
+-- Versão: 3.0 - Atualizado em Janeiro 2026
+-- ============================================
+-- 
+-- FUNCIONALIDADES SUPORTADAS:
+-- - Autenticação com JWT e bcrypt
+-- - Sistema de roles (admin/user) 
+-- - Permissões granulares por recurso
+-- - Configurações do sistema (proxy, empresa, tema)
+-- - Gestão de clientes com consulta CNPJ
+-- - Layouts de impressão com imagens BYTEA
+-- - Log de auditoria completo
 -- ============================================
 
 -- ============================================
@@ -40,6 +50,9 @@ CREATE TABLE IF NOT EXISTS public.profiles (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL
 );
 
+COMMENT ON TABLE public.profiles IS 'Informações de perfil dos usuários do sistema';
+COMMENT ON COLUMN public.profiles.ativo IS 'Indica se o usuário está ativo no sistema';
+
 -- ============================================
 -- USER_CREDENTIALS - Credenciais de autenticação
 -- ============================================
@@ -49,6 +62,9 @@ CREATE TABLE IF NOT EXISTS public.user_credentials (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+
+COMMENT ON TABLE public.user_credentials IS 'Armazena hash bcrypt das senhas dos usuários';
+COMMENT ON COLUMN public.user_credentials.password_hash IS 'Hash bcrypt da senha do usuário';
 
 -- ============================================
 -- USER_ROLES - Papéis do usuário (admin/user)
@@ -60,6 +76,8 @@ CREATE TABLE IF NOT EXISTS public.user_roles (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   UNIQUE(user_id, role)
 );
+
+COMMENT ON TABLE public.user_roles IS 'Papéis atribuídos aos usuários (admin ou user)';
 
 -- ============================================
 -- USER_PERMISSIONS - Permissões granulares
@@ -77,6 +95,9 @@ CREATE TABLE IF NOT EXISTS public.user_permissions (
   UNIQUE(user_id, resource)
 );
 
+COMMENT ON TABLE public.user_permissions IS 'Permissões granulares por recurso para cada usuário';
+COMMENT ON COLUMN public.user_permissions.resource IS 'Nome do recurso: clientes, modelos, tipos, campos, layouts, historico';
+
 -- ============================================
 -- SYSTEM_CONFIG - Configurações do sistema
 -- ============================================
@@ -87,6 +108,10 @@ CREATE TABLE IF NOT EXISTS public.system_config (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+
+COMMENT ON TABLE public.system_config IS 'Configurações gerais do sistema';
+COMMENT ON COLUMN public.system_config.key IS 'Chaves: setup_completed, proxy_config, company_config, system_config';
+COMMENT ON COLUMN public.system_config.value IS 'Valor em formato JSONB';
 
 -- ============================================
 -- CLIENTES - Cadastro de clientes
@@ -112,6 +137,8 @@ CREATE TABLE IF NOT EXISTS public.clientes (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
+COMMENT ON TABLE public.clientes IS 'Cadastro de clientes com dados da Receita Federal';
+
 -- ============================================
 -- MODELOS - Modelos de layout
 -- ============================================
@@ -124,6 +151,8 @@ CREATE TABLE IF NOT EXISTS public.modelos (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+
+COMMENT ON TABLE public.modelos IS 'Modelos disponíveis para layouts';
 
 -- ============================================
 -- TIPOS_IMPRESSAO - Tipos de impressão
@@ -138,6 +167,8 @@ CREATE TABLE IF NOT EXISTS public.tipos_impressao (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
+COMMENT ON TABLE public.tipos_impressao IS 'Tipos de impressão disponíveis para layouts';
+
 -- ============================================
 -- CAMPOS - Campos disponíveis para layouts
 -- ============================================
@@ -150,6 +181,8 @@ CREATE TABLE IF NOT EXISTS public.campos (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
+
+COMMENT ON TABLE public.campos IS 'Campos disponíveis para associação aos layouts';
 
 -- ============================================
 -- LAYOUTS - Layouts de impressão
@@ -169,6 +202,10 @@ CREATE TABLE IF NOT EXISTS public.layouts (
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
+COMMENT ON TABLE public.layouts IS 'Layouts de impressão associados aos clientes';
+COMMENT ON COLUMN public.layouts.imagem_data IS 'Imagem armazenada em formato binário (BYTEA)';
+COMMENT ON COLUMN public.layouts.imagem_tipo IS 'MIME type da imagem (ex: image/png, image/jpeg)';
+
 -- ============================================
 -- LAYOUT_CAMPOS - Campos associados aos layouts
 -- ============================================
@@ -181,8 +218,11 @@ CREATE TABLE IF NOT EXISTS public.layout_campos (
   created_by UUID REFERENCES public.profiles(id),
   updated_by UUID REFERENCES public.profiles(id),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL,
-  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now()
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT now(),
+  UNIQUE(layout_id, campo_id)
 );
+
+COMMENT ON TABLE public.layout_campos IS 'Associação de campos aos layouts com ordem e obrigatoriedade';
 
 -- ============================================
 -- AUDIT_LOG - Log de auditoria
@@ -198,6 +238,9 @@ CREATE TABLE IF NOT EXISTS public.audit_log (
   changed_at TIMESTAMP WITH TIME ZONE DEFAULT now()
 );
 
+COMMENT ON TABLE public.audit_log IS 'Log de auditoria para rastreamento de alterações';
+COMMENT ON COLUMN public.audit_log.action IS 'Tipo de ação: INSERT, UPDATE, DELETE';
+
 -- ============================================
 -- ÍNDICES PARA PERFORMANCE
 -- ============================================
@@ -205,6 +248,7 @@ CREATE TABLE IF NOT EXISTS public.audit_log (
 -- Índices para profiles
 CREATE INDEX IF NOT EXISTS idx_profiles_email ON public.profiles(email);
 CREATE INDEX IF NOT EXISTS idx_profiles_ativo ON public.profiles(ativo);
+CREATE INDEX IF NOT EXISTS idx_profiles_nome ON public.profiles(nome);
 
 -- Índices para user_roles
 CREATE INDEX IF NOT EXISTS idx_user_roles_user_id ON public.user_roles(user_id);
@@ -214,23 +258,41 @@ CREATE INDEX IF NOT EXISTS idx_user_roles_role ON public.user_roles(role);
 CREATE INDEX IF NOT EXISTS idx_user_permissions_user_id ON public.user_permissions(user_id);
 CREATE INDEX IF NOT EXISTS idx_user_permissions_resource ON public.user_permissions(resource);
 
+-- Índices para system_config
+CREATE INDEX IF NOT EXISTS idx_system_config_key ON public.system_config(key);
+
 -- Índices para clientes
 CREATE INDEX IF NOT EXISTS idx_clientes_nome ON public.clientes(nome);
 CREATE INDEX IF NOT EXISTS idx_clientes_cnpj ON public.clientes(cnpj);
+CREATE INDEX IF NOT EXISTS idx_clientes_cidade ON public.clientes(cidade);
+CREATE INDEX IF NOT EXISTS idx_clientes_uf ON public.clientes(uf);
+
+-- Índices para modelos
+CREATE INDEX IF NOT EXISTS idx_modelos_nome ON public.modelos(nome);
+
+-- Índices para tipos_impressao
+CREATE INDEX IF NOT EXISTS idx_tipos_impressao_nome ON public.tipos_impressao(nome);
+
+-- Índices para campos
+CREATE INDEX IF NOT EXISTS idx_campos_nome ON public.campos(nome);
 
 -- Índices para layouts
 CREATE INDEX IF NOT EXISTS idx_layouts_cliente_id ON public.layouts(cliente_id);
 CREATE INDEX IF NOT EXISTS idx_layouts_modelo_id ON public.layouts(modelo_id);
 CREATE INDEX IF NOT EXISTS idx_layouts_tipo_impressao_id ON public.layouts(tipo_impressao_id);
+CREATE INDEX IF NOT EXISTS idx_layouts_nome ON public.layouts(nome);
 
 -- Índices para layout_campos
 CREATE INDEX IF NOT EXISTS idx_layout_campos_layout_id ON public.layout_campos(layout_id);
 CREATE INDEX IF NOT EXISTS idx_layout_campos_campo_id ON public.layout_campos(campo_id);
+CREATE INDEX IF NOT EXISTS idx_layout_campos_ordem ON public.layout_campos(ordem);
 
 -- Índices para audit_log
 CREATE INDEX IF NOT EXISTS idx_audit_log_table_name ON public.audit_log(table_name);
 CREATE INDEX IF NOT EXISTS idx_audit_log_record_id ON public.audit_log(record_id);
 CREATE INDEX IF NOT EXISTS idx_audit_log_changed_at ON public.audit_log(changed_at DESC);
+CREATE INDEX IF NOT EXISTS idx_audit_log_changed_by ON public.audit_log(changed_by);
+CREATE INDEX IF NOT EXISTS idx_audit_log_action ON public.audit_log(action);
 
 -- ============================================
 -- FUNÇÕES
@@ -248,6 +310,8 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+COMMENT ON FUNCTION public.handle_updated_at() IS 'Atualiza automaticamente a coluna updated_at';
 
 -- Função para criar log de auditoria
 CREATE OR REPLACE FUNCTION public.create_audit_log()
@@ -273,6 +337,8 @@ BEGIN
 END;
 $$;
 
+COMMENT ON FUNCTION public.create_audit_log() IS 'Cria registros de auditoria automaticamente';
+
 -- Função para verificar role do usuário
 CREATE OR REPLACE FUNCTION public.has_role(_user_id uuid, _role app_role)
 RETURNS boolean
@@ -287,6 +353,8 @@ AS $$
     AND role = _role
   )
 $$;
+
+COMMENT ON FUNCTION public.has_role(uuid, app_role) IS 'Verifica se um usuário possui determinado papel';
 
 -- Função para verificar permissão do usuário
 CREATE OR REPLACE FUNCTION public.has_permission(_user_id uuid, _resource text, _action text)
@@ -334,7 +402,9 @@ BEGIN
 END;
 $$;
 
--- Função para conceder permissões padrão
+COMMENT ON FUNCTION public.has_permission(uuid, text, text) IS 'Verifica permissão específica do usuário para um recurso';
+
+-- Função para conceder permissões padrão a novos usuários
 CREATE OR REPLACE FUNCTION public.grant_default_permissions()
 RETURNS trigger
 LANGUAGE plpgsql
@@ -345,6 +415,7 @@ DECLARE
   resources TEXT[] := ARRAY['clientes', 'modelos', 'tipos', 'campos', 'layouts', 'historico'];
   res_name TEXT;
 BEGIN
+  -- Concede permissão de visualização para todos os recursos a novos usuários não-admin
   FOREACH res_name IN ARRAY resources
   LOOP
     INSERT INTO public.user_permissions (user_id, resource, can_view, can_create, can_edit, can_delete)
@@ -355,6 +426,8 @@ BEGIN
   RETURN NEW;
 END;
 $$;
+
+COMMENT ON FUNCTION public.grant_default_permissions() IS 'Concede permissões padrão de visualização a novos usuários';
 
 -- Função para clonar layout
 CREATE OR REPLACE FUNCTION public.clone_layout(origem_layout_id uuid, destino_cliente_id uuid)
@@ -386,6 +459,8 @@ BEGIN
   RETURN novo_layout_id;
 END;
 $$;
+
+COMMENT ON FUNCTION public.clone_layout(uuid, uuid) IS 'Clona um layout existente para outro cliente';
 
 -- Função para comparar dois layouts
 CREATE OR REPLACE FUNCTION public.comparar_layouts(layout1_id uuid, layout2_id uuid)
@@ -427,6 +502,8 @@ BEGIN
   ORDER BY tc.nome;
 END;
 $$;
+
+COMMENT ON FUNCTION public.comparar_layouts(uuid, uuid) IS 'Compara campos entre dois layouts';
 
 -- Função para comparar múltiplos layouts
 CREATE OR REPLACE FUNCTION public.comparar_multiplos_layouts(layout_ids uuid[])
@@ -483,6 +560,8 @@ BEGIN
 END;
 $$;
 
+COMMENT ON FUNCTION public.comparar_multiplos_layouts(uuid[]) IS 'Compara campos entre múltiplos layouts';
+
 -- Função para buscar clientes por campos específicos
 CREATE OR REPLACE FUNCTION public.clientes_com_campo(nomes_campos text[])
 RETURNS TABLE(cliente_id uuid, cliente_nome text, cliente_cnpj text, layout_id uuid, layout_nome text, modelo_nome text, tipo_nome text)
@@ -515,6 +594,8 @@ BEGIN
   ORDER BY c.nome, l.nome;
 END;
 $$;
+
+COMMENT ON FUNCTION public.clientes_com_campo(text[]) IS 'Busca clientes que possuem layouts com campos específicos';
 
 -- ============================================
 -- TRIGGERS
@@ -579,6 +660,17 @@ CREATE TRIGGER grant_permissions_on_new_user
   WHEN (NEW.role = 'user')
   EXECUTE FUNCTION public.grant_default_permissions();
 
+-- Triggers para auditoria (opcional - descomente se necessário)
+-- DROP TRIGGER IF EXISTS audit_clientes ON public.clientes;
+-- CREATE TRIGGER audit_clientes
+--   AFTER INSERT OR UPDATE OR DELETE ON public.clientes
+--   FOR EACH ROW EXECUTE FUNCTION public.create_audit_log();
+
+-- DROP TRIGGER IF EXISTS audit_layouts ON public.layouts;
+-- CREATE TRIGGER audit_layouts
+--   AFTER INSERT OR UPDATE OR DELETE ON public.layouts
+--   FOR EACH ROW EXECUTE FUNCTION public.create_audit_log();
+
 -- ============================================
 -- DADOS INICIAIS
 -- ============================================
@@ -588,16 +680,71 @@ INSERT INTO public.system_config (key, value)
 VALUES ('setup_completed', 'false'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
+-- Inserir configuração inicial de proxy (desabilitado por padrão)
+INSERT INTO public.system_config (key, value)
+VALUES ('proxy_config', '{"enabled": false, "protocol": "http", "host": "", "port": "", "username": "", "password": ""}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- Inserir configuração inicial da empresa
+INSERT INTO public.system_config (key, value)
+VALUES ('company_config', '{"name": "", "razaoSocial": "", "cnpj": "", "endereco": "", "cidade": "", "uf": "", "cep": "", "telefone": "", "email": "", "logo": ""}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- Inserir configuração inicial do sistema (tema)
+INSERT INTO public.system_config (key, value)
+VALUES ('system_config', '{"theme": "system"}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+
+-- ============================================
+-- VIEWS (OPCIONAIS)
+-- ============================================
+
+-- View para visualizar layouts com informações completas
+CREATE OR REPLACE VIEW public.v_layouts_completos AS
+SELECT 
+  l.id,
+  l.nome AS layout_nome,
+  c.nome AS cliente_nome,
+  c.cnpj AS cliente_cnpj,
+  m.nome AS modelo_nome,
+  t.nome AS tipo_impressao_nome,
+  l.created_at,
+  l.updated_at,
+  (SELECT COUNT(*) FROM public.layout_campos lc WHERE lc.layout_id = l.id) AS total_campos
+FROM public.layouts l
+JOIN public.clientes c ON c.id = l.cliente_id
+JOIN public.modelos m ON m.id = l.modelo_id
+JOIN public.tipos_impressao t ON t.id = l.tipo_impressao_id;
+
+COMMENT ON VIEW public.v_layouts_completos IS 'View com informações completas de layouts';
+
+-- View para visualizar usuários com roles
+CREATE OR REPLACE VIEW public.v_usuarios_roles AS
+SELECT 
+  p.id,
+  p.nome,
+  p.email,
+  p.telefone,
+  p.cargo,
+  p.ativo,
+  ur.role,
+  p.created_at,
+  p.updated_at
+FROM public.profiles p
+LEFT JOIN public.user_roles ur ON ur.user_id = p.id;
+
+COMMENT ON VIEW public.v_usuarios_roles IS 'View com informações de usuários e seus papéis';
+
 -- ============================================
 -- NOTAS IMPORTANTES
 -- ============================================
 -- 
--- TABELAS CRIADAS:
+-- TABELAS CRIADAS (12):
 -- 1. profiles - Informações do usuário
 -- 2. user_credentials - Hash de senhas (separado de profiles por segurança)
 -- 3. user_roles - Papéis do usuário (admin/user)
 -- 4. user_permissions - Permissões granulares por recurso
--- 5. system_config - Configurações do sistema
+-- 5. system_config - Configurações do sistema (setup, proxy, empresa, tema)
 -- 6. clientes - Cadastro de clientes
 -- 7. modelos - Modelos de layout
 -- 8. tipos_impressao - Tipos de impressão
@@ -606,15 +753,28 @@ ON CONFLICT (key) DO NOTHING;
 -- 11. layout_campos - Associação campos x layouts
 -- 12. audit_log - Log de auditoria
 --
--- COLUNAS IMPORTANTES:
--- - layouts.imagem_data (BYTEA) - Armazena imagem binária diretamente
--- - layouts.imagem_tipo (TEXT) - MIME type da imagem
--- - user_credentials.password_hash - Hash bcrypt da senha
+-- CONFIGURAÇÕES DO SISTEMA (system_config):
+-- - setup_completed: Indica se o setup inicial foi concluído
+-- - proxy_config: Configurações de proxy para acesso externo
+-- - company_config: Dados da empresa (nome, logo, CNPJ, etc.)
+-- - system_config: Configurações gerais (tema, etc.)
+--
+-- FUNÇÕES CRIADAS (8):
+-- - handle_updated_at(): Atualiza timestamp automaticamente
+-- - create_audit_log(): Cria registros de auditoria
+-- - has_role(): Verifica papel do usuário
+-- - has_permission(): Verifica permissão específica
+-- - grant_default_permissions(): Concede permissões padrão
+-- - clone_layout(): Clona layout para outro cliente
+-- - comparar_layouts(): Compara dois layouts
+-- - comparar_multiplos_layouts(): Compara múltiplos layouts
+-- - clientes_com_campo(): Busca clientes por campos
 --
 -- FOREIGN KEYS:
 -- - Todas as tabelas têm referências para profiles(id) onde aplicável
 -- - CASCADE DELETE para user_credentials, user_roles, user_permissions
 -- - CASCADE DELETE para layouts quando cliente é deletado
+-- - CASCADE DELETE para layout_campos quando layout é deletado
 -- - RESTRICT DELETE para campos e modelos usados em layouts
 --
 -- ============================================
