@@ -9,6 +9,7 @@ import { toast } from "sonner";
 import { useAuth } from "@/contexts/AuthContext";
 import { signInSchema, signUpSchema } from "@/lib/validations";
 import { getApiUrl } from "@/lib/config";
+import { maskPhone, unmask } from "@/lib/utils";
 
 const API_URL = getApiUrl();
 
@@ -58,7 +59,7 @@ export default function Auth() {
           nome,
           email,
           password,
-          telefone,
+          telefone: unmask(telefone),
         }),
       });
 
@@ -210,7 +211,7 @@ export default function Auth() {
                     type="tel"
                     placeholder="(00) 00000-0000"
                     value={telefone}
-                    onChange={(e) => setTelefone(e.target.value)}
+                    onChange={(e) => setTelefone(maskPhone(e.target.value))}
                   />
                 </div>
                 <div className="space-y-2">
