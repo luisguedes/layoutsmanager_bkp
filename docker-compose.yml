@@ -16,6 +16,11 @@ services:
       DB_SSL: ${DB_SSL}
       VITE_JWT_SECRET: ${VITE_JWT_SECRET}
       CORS_ORIGIN: ${CORS_ORIGIN}
+      # Proxy configuration (optional - for environments requiring proxy)
+      PROXY_HOST: ${PROXY_HOST:-}
+      PROXY_PORT: ${PROXY_PORT:-}
+      PROXY_USER: ${PROXY_USER:-}
+      PROXY_PASS: ${PROXY_PASS:-}
     ports:
       - "3001:3001"
     extra_hosts:
