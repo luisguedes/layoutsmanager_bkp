@@ -685,9 +685,9 @@ INSERT INTO public.system_config (key, value)
 VALUES ('proxy_config', '{"enabled": false, "protocol": "http", "host": "", "port": "", "username": "", "password": ""}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
--- Inserir configuração inicial da empresa
+-- Inserir configuração inicial da empresa (com suporte a logo_dark, bairro e numero)
 INSERT INTO public.system_config (key, value)
-VALUES ('company_config', '{"name": "", "razaoSocial": "", "cnpj": "", "endereco": "", "cidade": "", "uf": "", "cep": "", "telefone": "", "email": "", "logo": ""}'::jsonb)
+VALUES ('company_config', '{"nome": "", "razao_social": "", "cnpj": "", "endereco": "", "bairro": "", "numero": "", "cidade": "", "uf": "", "cep": "", "telefone": "", "email": "", "logo": "", "logo_dark": ""}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
 -- Inserir configuração inicial do sistema (tema)

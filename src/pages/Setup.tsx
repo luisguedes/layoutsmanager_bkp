@@ -1,5 +1,6 @@
 import { useState, useEffect, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
+import { useQueryClient } from "@tanstack/react-query";
 import { useForm } from "react-hook-form";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { z } from "zod";
@@ -8,8 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage, FormDescription } from "@/components/ui/form";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Database, User, Building2, CheckCircle, Download, Loader2, CheckCircle2, AlertCircle, BookOpen, Cloud, Server, Container, Globe, Wifi, WifiOff, Activity, RefreshCw } from "lucide-react";
-import { maskCNPJ, maskPhone } from "@/lib/utils";
+import { Settings, Database, User, CheckCircle, Download, Loader2, CheckCircle2, AlertCircle, BookOpen, Cloud, Server, Container, Globe, Wifi, WifiOff, Activity, RefreshCw } from "lucide-react";
+import { maskPhone } from "@/lib/utils";
 import { Separator } from "@/components/ui/separator";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
@@ -48,11 +49,6 @@ const setupSchema = z.object({
   dbPassword: z.string().optional(),
   dbSsl: z.boolean().optional(),
   
-  // Informações da Empresa
-  empresaNome: z.string().optional(),
-  empresaCNPJ: z.string().optional(),
-  empresaTelefone: z.string().optional(),
-  empresaEmail: z.string().optional(),
 }).refine((data) => data.adminSenha === data.adminConfirmarSenha, {
   message: "As senhas não coincidem",
   path: ["adminConfirmarSenha"],
@@ -73,6 +69,7 @@ const Setup = () => {
   const [retryCountdown, setRetryCountdown] = useState<number>(0);
   const [retryAttempt, setRetryAttempt] = useState<number>(0);
   const navigate = useNavigate();
+  const queryClient = useQueryClient();
   const { toast } = useToast();
 
   const envInfo = getEnvironmentInfo();
@@ -95,10 +92,6 @@ const Setup = () => {
       dbName: "layout_app",
       dbUser: "postgres",
       dbPassword: "",
-      empresaNome: "",
-      empresaCNPJ: "",
-      empresaTelefone: "",
-      empresaEmail: "",
     },
   });
 
@@ -351,15 +344,6 @@ const Setup = () => {
   };
 
   const onSubmit = async (data: SetupForm) => {
-    if (!data.empresaNome || data.empresaNome.length < 3) {
-      toast({
-        title: "Erro de validação",
-        description: "Nome da empresa é obrigatório",
-        variant: "destructive",
-      });
-      return;
-    }
-    
     setIsLoading(true);
     try {
       const apiUrl = getSetupApiUrl();
@@ -391,12 +375,6 @@ const Setup = () => {
       
       // 3. Mark setup as complete
       localStorage.setItem('setup_completed', 'true');
-      localStorage.setItem('empresa_config', JSON.stringify({
-        nome: data.empresaNome,
-        cnpj: data.empresaCNPJ || '',
-        telefone: data.empresaTelefone || '',
-        email: data.empresaEmail || '',
-      }));
 
       // 4. Save DB config for standalone mode
       if (data.envType === 'standalone' && data.dbType === 'postgresql') {
@@ -429,7 +407,11 @@ const Setup = () => {
         description: "Sistema configurado com sucesso. Redirecionando...",
       });
 
-      setTimeout(() => navigate("/dashboard"), 2000);
+      // Invalidar cache do setupStatus para forçar revalidação
+      await queryClient.invalidateQueries({ queryKey: ["setupStatus"] });
+      
+      // Redirecionar para autenticação
+      setTimeout(() => navigate("/auth", { replace: true }), 1500);
     } catch (error: any) {
       console.error("Erro no setup:", error);
       toast({
@@ -496,18 +478,6 @@ const Setup = () => {
         } else {
           isValid = true;
         }
-      }
-    } else if (currentStep === 3) {
-      const values = form.getValues();
-      
-      if (!values.empresaNome || values.empresaNome.length < 3) {
-        form.setError("empresaNome", { message: "Nome da empresa é obrigatório" });
-        isValid = false;
-      } else if (values.empresaEmail && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.empresaEmail)) {
-        form.setError("empresaEmail", { message: "Email inválido" });
-        isValid = false;
-      } else {
-        isValid = true;
       }
     }
     
@@ -591,7 +561,7 @@ const Setup = () => {
           
           {/* Progress Steps */}
           <div className="flex items-center justify-center gap-1 sm:gap-2 pt-4">
-            {['Início', 'Admin', 'Banco', 'Empresa'].map((label, index) => (
+            {['Início', 'Admin', 'Banco'].map((label, index) => (
               <div key={index} className="flex items-center gap-1">
                 {index > 0 && <Separator className="w-6 sm:w-8" />}
                 <div className={`flex items-center gap-1 ${currentStep === index ? 'text-primary' : 'text-muted-foreground'}`}>
@@ -599,7 +569,7 @@ const Setup = () => {
                     currentStep > index ? 'bg-primary text-primary-foreground' : 
                     currentStep === index ? 'bg-primary text-primary-foreground' : 'bg-muted'
                   }`}>
-                    {currentStep > index ? <CheckCircle className="h-4 w-4" /> : index}
+                    {currentStep > index ? <CheckCircle className="h-4 w-4" /> : index + 1}
                   </div>
                   <span className="text-xs font-medium hidden md:inline">{label}</span>
                 </div>
@@ -1090,92 +1060,7 @@ const Setup = () => {
                     <Button type="button" variant="outline" onClick={() => setCurrentStep(1)} className="flex-1">
                       Voltar
                     </Button>
-                    <Button type="button" onClick={nextStep} className="flex-1">
-                      Próximo
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-              {/* Step 3: Company */}
-              {currentStep === 3 && (
-                <div className="space-y-4">
-                  <div className="flex items-center gap-2 mb-4">
-                    <Building2 className="h-5 w-5 text-primary" />
-                    <h3 className="text-lg font-semibold">Informações da Empresa</h3>
-                  </div>
-
-                  <FormField
-                    control={form.control}
-                    name="empresaNome"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>Nome da Empresa *</FormLabel>
-                        <FormControl>
-                          <Input placeholder="Minha Empresa Ltda" {...field} />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <FormField
-                    control={form.control}
-                    name="empresaCNPJ"
-                    render={({ field }) => (
-                      <FormItem>
-                        <FormLabel>CNPJ</FormLabel>
-                        <FormControl>
-                          <Input 
-                            placeholder="00.000.000/0000-00" 
-                            {...field}
-                            onChange={(e) => field.onChange(maskCNPJ(e.target.value))}
-                          />
-                        </FormControl>
-                        <FormMessage />
-                      </FormItem>
-                    )}
-                  />
-
-                  <div className="grid sm:grid-cols-2 gap-4">
-                    <FormField
-                      control={form.control}
-                      name="empresaEmail"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Email</FormLabel>
-                          <FormControl>
-                            <Input type="email" placeholder="contato@empresa.com" {...field} />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-
-                    <FormField
-                      control={form.control}
-                      name="empresaTelefone"
-                      render={({ field }) => (
-                        <FormItem>
-                          <FormLabel>Telefone</FormLabel>
-                          <FormControl>
-                            <Input 
-                              placeholder="(11) 3333-4444" 
-                              {...field}
-                              onChange={(e) => field.onChange(maskPhone(e.target.value))}
-                            />
-                          </FormControl>
-                          <FormMessage />
-                        </FormItem>
-                      )}
-                    />
-                  </div>
-
-                  <div className="flex gap-3 pt-4">
-                    <Button type="button" variant="outline" onClick={() => setCurrentStep(2)} className="flex-1">
-                      Voltar
-                    </Button>
-                    <Button type="submit" disabled={isLoading} className="flex-1">
+                    <Button type="submit" disabled={isLoading || (selectedDbType === 'postgresql' && dbInstallStatus !== 'success')} className="flex-1">
                       {isLoading ? (
                         <>
                           <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -1188,6 +1073,7 @@ const Setup = () => {
                   </div>
                 </div>
               )}
+
             </form>
           </Form>
         </CardContent>

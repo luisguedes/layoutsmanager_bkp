@@ -23,10 +23,10 @@ export const SetupGuard = ({ children }: { children: React.ReactNode }) => {
         console.log("❌ [SETUP-GUARD] Setup não completo, redirecionando para /setup");
         navigate("/setup", { replace: true });
       }
-      // If setup IS completed and user is on setup page, redirect to dashboard
+      // If setup IS completed and user is on setup page, redirect to auth
       else if (setupCompleted && location.pathname === "/setup") {
-        console.log("✅ [SETUP-GUARD] Setup completo, redirecionando para /dashboard");
-        navigate("/dashboard", { replace: true });
+        console.log("✅ [SETUP-GUARD] Setup completo, redirecionando para /auth");
+        navigate("/auth", { replace: true });
       } else {
         console.log("ℹ️ [SETUP-GUARD] Mantendo na página atual:", location.pathname);
       }

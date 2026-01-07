@@ -7,7 +7,7 @@ import { fileURLToPath } from 'url';
 import { config } from 'dotenv';
 import { HttpsProxyAgent } from 'https-proxy-agent';
 import { initializeDatabase, query, getDatabase } from '../src/lib/db';
-import { login, signup, getCurrentUser } from '../src/lib/auth';
+import { login, signup, getCurrentUser, hashPassword } from '../src/lib/auth';
 import { apiConfig, validateConfig, logConfig } from './config';
 
 // Carregar variáveis de ambiente
@@ -529,64 +529,29 @@ app.get('/api/layouts', authenticate, checkPermission('layouts', 'view'), async 
   console.log('📋 [GET /api/layouts] Requisição recebida');
   try {
     console.log('🔍 [GET /api/layouts] Executando query...');
-    const result = await query(`
-      SELECT 
-        l.id,
-        l.nome,
-        l.cliente_id,
-        l.modelo_id,
-        l.tipo_impressao_id,
-        l.imagem_url,
-        CASE WHEN l.imagem_data IS NOT NULL THEN true ELSE false END as imagem_data,
-        l.created_at,
-        l.updated_at,
-        l.created_by,
-        l.updated_by,
-        c.nome as cliente_nome, 
-        c.cnpj as cliente_cnpj,
-        m.nome as modelo_nome,
-        t.nome as tipo_nome,
-        cp_created.nome as created_profile_nome,
-        cp_updated.nome as updated_profile_nome,
-        COALESCE(
-          json_agg(
-            json_build_object(
-              'id', lc.id,
-              'ordem', lc.ordem,
-              'obrigatorio', lc.obrigatorio,
-              'campos', json_build_object('id', ca.id, 'nome', ca.nome)
-            ) ORDER BY lc.ordem
-          ) FILTER (WHERE lc.id IS NOT NULL),
-          '[]'::json
-        ) as layout_campos
-      FROM layouts l
-      LEFT JOIN clientes c ON l.cliente_id = c.id
-      LEFT JOIN modelos m ON l.modelo_id = m.id
-      LEFT JOIN tipos_impressao t ON l.tipo_impressao_id = t.id
-      LEFT JOIN profiles cp_created ON l.created_by = cp_created.id
-      LEFT JOIN profiles cp_updated ON l.updated_by = cp_updated.id
-      LEFT JOIN layout_campos lc ON l.id = lc.layout_id
-      LEFT JOIN campos ca ON lc.campo_id = ca.id
-      GROUP BY 
-        l.id, 
-        l.nome,
-        l.cliente_id,
-        l.modelo_id,
-        l.tipo_impressao_id,
-        l.imagem_url,
-        l.imagem_data,
-        l.created_at,
-        l.updated_at,
-        l.created_by,
-        l.updated_by,
-        c.nome, 
-        c.cnpj, 
-        m.nome, 
-        t.nome, 
-        cp_created.nome, 
-        cp_updated.nome
-      ORDER BY l.created_at DESC
-    `);
+    const result = await query(
+      "SELECT l.id, l.nome, l.cliente_id, l.modelo_id, l.tipo_impressao_id, l.imagem_url, " +
+      "CASE WHEN l.imagem_data IS NOT NULL THEN true ELSE false END as imagem_data, " +
+      "l.created_at, l.updated_at, l.created_by, l.updated_by, " +
+      "c.nome as cliente_nome, c.cnpj as cliente_cnpj, " +
+      "m.nome as modelo_nome, t.nome as tipo_nome, " +
+      "cp_created.nome as created_profile_nome, cp_updated.nome as updated_profile_nome, " +
+      "COALESCE(json_agg(json_build_object('id', lc.id, 'ordem', lc.ordem, 'obrigatorio', lc.obrigatorio, " +
+      "'campos', json_build_object('id', ca.id, 'nome', ca.nome)) ORDER BY lc.ordem) " +
+      "FILTER (WHERE lc.id IS NOT NULL), '[]'::json) as layout_campos " +
+      "FROM layouts l " +
+      "LEFT JOIN clientes c ON l.cliente_id = c.id " +
+      "LEFT JOIN modelos m ON l.modelo_id = m.id " +
+      "LEFT JOIN tipos_impressao t ON l.tipo_impressao_id = t.id " +
+      "LEFT JOIN profiles cp_created ON l.created_by = cp_created.id " +
+      "LEFT JOIN profiles cp_updated ON l.updated_by = cp_updated.id " +
+      "LEFT JOIN layout_campos lc ON l.id = lc.layout_id " +
+      "LEFT JOIN campos ca ON lc.campo_id = ca.id " +
+      "GROUP BY l.id, l.nome, l.cliente_id, l.modelo_id, l.tipo_impressao_id, l.imagem_url, " +
+      "l.imagem_data, l.created_at, l.updated_at, l.created_by, l.updated_by, " +
+      "c.nome, c.cnpj, m.nome, t.nome, cp_created.nome, cp_updated.nome " +
+      "ORDER BY l.created_at DESC"
+    );
     
     // Transformar para formato esperado pelo frontend
     const layouts = result.rows.map(row => ({
@@ -832,10 +797,10 @@ app.post('/api/usuarios/:id/reset-password', authenticate, requireAdmin, async (
       return res.status(400).json({ error: 'Senha deve ter no mínimo 8 caracteres' });
     }
     
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await hashPassword(newPassword);
     
     await query(
-      `UPDATE users SET password = $1, updated_at = NOW() WHERE id = $2`,
+      `UPDATE user_credentials SET password_hash = $1, updated_at = NOW() WHERE user_id = $2`,
       [hashedPassword, id]
     );
     
@@ -1121,17 +1086,45 @@ VITE_JWT_SECRET=${crypto.randomBytes(32).toString('hex')}
 });
 
 // ==================== CONFIGURAÇÃO DE PROXY ====================
-// Função helper para obter configuração de proxy do banco
+// Função helper para obter configuração de proxy do banco ou variáveis de ambiente
 const getProxyConfig = async () => {
   try {
+    // Primeiro tenta buscar do banco
     const result = await query(
       `SELECT value FROM system_config WHERE key = 'proxy_config'`
     );
-    if (result.rows.length > 0) {
+    if (result.rows.length > 0 && result.rows[0].value.enabled) {
       return result.rows[0].value;
     }
+    
+    // Se não tiver no banco ou não estiver habilitado, verifica variáveis de ambiente
+    // Isso permite configurar proxy via Docker/ambiente antes do primeiro login
+    if (process.env.PROXY_HOST && process.env.PROXY_PORT) {
+      console.log('🔌 [PROXY] Usando configuração de proxy das variáveis de ambiente');
+      return {
+        enabled: true,
+        host: process.env.PROXY_HOST,
+        port: process.env.PROXY_PORT,
+        username: process.env.PROXY_USER || '',
+        password: process.env.PROXY_PASS || '',
+        protocol: 'http',
+      };
+    }
+    
     return { enabled: false };
   } catch (error) {
+    // Se erro de conexão com banco, tenta variáveis de ambiente
+    if (process.env.PROXY_HOST && process.env.PROXY_PORT) {
+      console.log('🔌 [PROXY] Usando configuração de proxy das variáveis de ambiente (fallback)');
+      return {
+        enabled: true,
+        host: process.env.PROXY_HOST,
+        port: process.env.PROXY_PORT,
+        username: process.env.PROXY_USER || '',
+        password: process.env.PROXY_PASS || '',
+        protocol: 'http',
+      };
+    }
     console.error('Erro ao buscar config de proxy:', error);
     return { enabled: false };
   }
@@ -1256,8 +1249,93 @@ app.post('/api/config/proxy/test', authenticate, requireAdmin, async (req: any, 
   }
 });
 
+// Testar conexão de proxy com URL específica
+app.post('/api/config/proxy/test-url', authenticate, requireAdmin, async (req: any, res) => {
+  try {
+    const { enabled, host, port, username, password, protocol, testUrl } = req.body;
+    
+    if (!enabled || !host || !port) {
+      return res.json({ success: false, message: 'Configuração de proxy incompleta' });
+    }
+    
+    if (!testUrl) {
+      return res.json({ success: false, message: 'URL de teste não fornecida' });
+    }
+    
+    // Montar URL do proxy
+    let proxyUrl = `${protocol || 'http'}://`;
+    if (username && password) {
+      proxyUrl += `${encodeURIComponent(username)}:${encodeURIComponent(password)}@`;
+    }
+    proxyUrl += `${host}:${port}`;
+    
+    console.log(`🔌 [PROXY-TEST-URL] Testando ${testUrl} via proxy ${protocol}://${host}:${port}`);
+    
+    try {
+      const agent = new HttpsProxyAgent(proxyUrl);
+      const startTime = Date.now();
+      
+      const testResponse = await fetch(testUrl, {
+        // @ts-ignore - agent é suportado pelo node-fetch
+        agent,
+        signal: AbortSignal.timeout(15000),
+      });
+      
+      const responseTime = Date.now() - startTime;
+      
+      if (testResponse.ok) {
+        res.json({ 
+          success: true, 
+          message: 'Conexão estabelecida',
+          statusCode: testResponse.status,
+          responseTime,
+        });
+      } else {
+        res.json({ 
+          success: false, 
+          message: `HTTP ${testResponse.status}: ${testResponse.statusText}`,
+          statusCode: testResponse.status,
+          responseTime,
+        });
+      }
+    } catch (fetchError: any) {
+      console.error('❌ [PROXY-TEST-URL] Erro no fetch:', fetchError);
+      res.json({ 
+        success: false, 
+        message: `Erro: ${fetchError.message}` 
+      });
+    }
+  } catch (error: any) {
+    console.error('❌ [PROXY-TEST-URL] Erro:', error);
+    res.status(500).json({ success: false, message: error.message });
+  }
+});
+
 // ==================== CONFIGURAÇÃO DA EMPRESA ====================
-// Buscar configuração da empresa
+// Buscar logo da empresa (apenas usuário autenticado, não precisa ser admin)
+app.get('/api/config/company/logo', authenticate, async (req: any, res) => {
+  try {
+    const result = await query(`SELECT value FROM system_config WHERE key = 'company_config'`);
+    if (result.rows.length > 0) {
+      const config = result.rows[0].value;
+      res.json({
+        nome: config.nome || "",
+        logo: config.logo || "",
+        logo_dark: config.logo_dark || "",
+      });
+    } else {
+      res.json({
+        nome: "",
+        logo: "",
+        logo_dark: "",
+      });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Buscar configuração da empresa (admin apenas)
 app.get('/api/config/company', authenticate, requireAdmin, async (req: any, res) => {
   try {
     const result = await query(`SELECT value FROM system_config WHERE key = 'company_config'`);
@@ -1269,12 +1347,15 @@ app.get('/api/config/company', authenticate, requireAdmin, async (req: any, res)
         razao_social: "",
         cnpj: "",
         endereco: "",
+        bairro: "",
+        numero: "",
         cidade: "",
         uf: "",
         cep: "",
         telefone: "",
         email: "",
         logo: "",
+        logo_dark: "",
       });
     }
   } catch (error: any) {
@@ -1285,19 +1366,22 @@ app.get('/api/config/company', authenticate, requireAdmin, async (req: any, res)
 // Salvar configuração da empresa
 app.post('/api/config/company', authenticate, requireAdmin, async (req: any, res) => {
   try {
-    const { nome, razao_social, cnpj, endereco, cidade, uf, cep, telefone, email, logo } = req.body;
+    const { nome, razao_social, cnpj, endereco, bairro, numero, cidade, uf, cep, telefone, email, logo, logo_dark } = req.body;
     
     const config = {
       nome: nome || '',
       razao_social: razao_social || '',
       cnpj: cnpj || '',
       endereco: endereco || '',
+      bairro: bairro || '',
+      numero: numero || '',
       cidade: cidade || '',
       uf: uf || '',
       cep: cep || '',
       telefone: telefone || '',
       email: email || '',
       logo: logo || '',
+      logo_dark: logo_dark || '',
     };
     
     // Verificar se já existe
@@ -1323,7 +1407,302 @@ app.post('/api/config/company', authenticate, requireAdmin, async (req: any, res
   }
 });
 
+// ==================== PREFERÊNCIAS DO USUÁRIO ====================
+// Buscar preferências do usuário
+app.get('/api/config/user-preferences', authenticate, async (req: any, res) => {
+  try {
+    const result = await query(
+      `SELECT value FROM system_config WHERE key = $1`,
+      [`user_preferences_${req.user.id}`]
+    );
+    
+    if (result.rows.length > 0) {
+      res.json(result.rows[0].value);
+    } else {
+      res.json({ theme: 'system' });
+    }
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Salvar preferências do usuário
+app.post('/api/config/user-preferences', authenticate, async (req: any, res) => {
+  try {
+    const { theme } = req.body;
+    
+    const preferences = {
+      theme: theme || 'system',
+    };
+    
+    // Verificar se já existe
+    const existing = await query(
+      `SELECT id FROM system_config WHERE key = $1`,
+      [`user_preferences_${req.user.id}`]
+    );
+    
+    if (existing.rows.length > 0) {
+      await query(
+        `UPDATE system_config SET value = $1, updated_at = NOW() WHERE key = $2`,
+        [JSON.stringify(preferences), `user_preferences_${req.user.id}`]
+      );
+    } else {
+      await query(
+        `INSERT INTO system_config (key, value) VALUES ($1, $2)`,
+        [`user_preferences_${req.user.id}`, JSON.stringify(preferences)]
+      );
+    }
+    
+    res.json({ success: true, preferences });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// ==================== CONSULTA CEP ====================
+// Rota GET para consulta automática de CEP
+app.get('/api/consultar-cep/:cep', authenticate, async (req: any, res) => {
+  try {
+    const { cep } = req.params;
+    
+    if (!cep) {
+      return res.status(400).json({ error: 'CEP é obrigatório' });
+    }
+
+    const cepLimpo = cep.replace(/\D/g, '');
+    
+    if (cepLimpo.length !== 8) {
+      return res.status(400).json({ error: 'CEP deve ter 8 dígitos' });
+    }
+
+    const proxyAgent = await createProxyAgent();
+    
+    console.log(`🔍 [CEP] Consultando CEP: ${cepLimpo}${proxyAgent ? ' (via proxy)' : ''}`);
+
+    const fetchOptions: any = {
+      signal: AbortSignal.timeout(15000),
+    };
+    
+    if (proxyAgent) {
+      fetchOptions.agent = proxyAgent;
+    }
+    
+    const response = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`, fetchOptions);
+    
+    if (!response.ok) {
+      throw new Error('Erro ao consultar CEP');
+    }
+
+    const data = await response.json();
+    
+    if (data.erro) {
+      return res.status(404).json({ error: 'CEP não encontrado' });
+    }
+
+    res.json({
+      cep: data.cep,
+      endereco: data.logradouro || '',
+      bairro: data.bairro || '',
+      cidade: data.localidade || '',
+      uf: data.uf || '',
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Rota POST para compatibilidade (mantida para scripts existentes)
+app.post('/api/consultar-cep', authenticate, async (req: any, res) => {
+  try {
+    const { cep } = req.body;
+    
+    if (!cep) {
+      return res.status(400).json({ error: 'CEP é obrigatório' });
+    }
+
+    const cepLimpo = cep.replace(/\D/g, '');
+    
+    if (cepLimpo.length !== 8) {
+      return res.status(400).json({ error: 'CEP deve ter 8 dígitos' });
+    }
+
+    const proxyAgent = await createProxyAgent();
+    
+    console.log(`🔍 [CEP] Consultando CEP: ${cepLimpo}${proxyAgent ? ' (via proxy)' : ''}`);
+
+    const fetchOptions: any = {
+      signal: AbortSignal.timeout(15000),
+    };
+    
+    if (proxyAgent) {
+      fetchOptions.agent = proxyAgent;
+    }
+    
+    const response = await fetch(`https://viacep.com.br/ws/${cepLimpo}/json/`, fetchOptions);
+    
+    if (!response.ok) {
+      throw new Error('Erro ao consultar CEP');
+    }
+
+    const data = await response.json();
+    
+    if (data.erro) {
+      return res.status(404).json({ error: 'CEP não encontrado' });
+    }
+
+    res.json({
+      cep: data.cep,
+      endereco: data.logradouro || '',
+      bairro: data.bairro || '',
+      cidade: data.localidade || '',
+      uf: data.uf || '',
+    });
+  } catch (error: any) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // ==================== CONSULTAR CNPJ ====================
+// Helper function to try multiple CNPJ APIs with fallback
+async function consultarCnpjComFallback(cnpjLimpo: string, proxyAgent: any) {
+  const fetchOptions: any = {
+    signal: AbortSignal.timeout(15000),
+  };
+  
+  if (proxyAgent) {
+    fetchOptions.agent = proxyAgent;
+  }
+
+  // Lista de APIs para tentar (em ordem de prioridade)
+  const apis = [
+    {
+      name: 'ReceitaWS',
+      url: `https://www.receitaws.com.br/v1/cnpj/${cnpjLimpo}`,
+      parseResponse: (data: any) => {
+        if (data.status === 'ERROR') {
+          throw new Error(data.message || 'CNPJ não encontrado');
+        }
+        return {
+          cnpj: data.cnpj,
+          nome: data.nome || '',
+          fantasia: data.fantasia || '',
+          logradouro: data.logradouro || '',
+          numero: data.numero || '',
+          bairro: data.bairro || '',
+          municipio: data.municipio || '',
+          uf: data.uf || '',
+          cep: data.cep || '',
+          telefone: data.telefone || '',
+          email: data.email || '',
+          situacao: data.situacao || '',
+          atividade_principal: data.atividade_principal?.[0]?.text || '',
+        };
+      }
+    },
+    {
+      name: 'BrasilAPI',
+      url: `https://brasilapi.com.br/api/cnpj/v1/${cnpjLimpo}`,
+      parseResponse: (data: any) => {
+        if (data.type === 'not_found' || data.message) {
+          throw new Error(data.message || 'CNPJ não encontrado');
+        }
+        return {
+          cnpj: data.cnpj,
+          nome: data.razao_social || '',
+          fantasia: data.nome_fantasia || '',
+          logradouro: data.logradouro || '',
+          numero: data.numero || '',
+          bairro: data.bairro || '',
+          municipio: data.municipio || '',
+          uf: data.uf || '',
+          cep: data.cep || '',
+          telefone: data.ddd_telefone_1 || '',
+          email: '',
+          situacao: data.descricao_situacao_cadastral || '',
+          atividade_principal: data.cnae_fiscal_descricao || '',
+        };
+      }
+    },
+    {
+      name: 'Minha Receita',
+      url: `https://minhareceita.org/${cnpjLimpo}`,
+      parseResponse: (data: any) => {
+        if (data.error || data.message) {
+          throw new Error(data.message || 'CNPJ não encontrado');
+        }
+        return {
+          cnpj: data.cnpj,
+          nome: data.razao_social || '',
+          fantasia: data.nome_fantasia || '',
+          logradouro: data.logradouro || '',
+          numero: data.numero || '',
+          bairro: data.bairro || '',
+          municipio: data.municipio || '',
+          uf: data.uf || '',
+          cep: data.cep || '',
+          telefone: data.ddd_telefone_1 || '',
+          email: data.email || '',
+          situacao: data.descricao_situacao_cadastral || '',
+          atividade_principal: data.cnae_fiscal_descricao || '',
+        };
+      }
+    }
+  ];
+
+  let lastError: Error | null = null;
+
+  for (const api of apis) {
+    try {
+      console.log(`🔍 [CNPJ] Tentando ${api.name}...`);
+      const response = await fetch(api.url, fetchOptions);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      const resultado = api.parseResponse(data);
+      console.log(`✅ [CNPJ] Sucesso com ${api.name}`);
+      return { ...resultado, fonte: api.name };
+    } catch (error: any) {
+      console.log(`⚠️ [CNPJ] Falha com ${api.name}: ${error.message}`);
+      lastError = error;
+      // Continua para a próxima API
+    }
+  }
+
+  throw lastError || new Error('Todas as APIs falharam');
+}
+
+// GET version for convenience
+app.get('/api/consultar-cnpj/:cnpj', authenticate, async (req: any, res) => {
+  try {
+    const { cnpj } = req.params;
+    
+    if (!cnpj) {
+      return res.status(400).json({ error: 'CNPJ é obrigatório' });
+    }
+
+    // Remove caracteres não numéricos do CNPJ
+    const cnpjLimpo = cnpj.replace(/\D/g, '');
+    
+    if (cnpjLimpo.length !== 14) {
+      return res.status(400).json({ error: 'CNPJ deve ter 14 dígitos' });
+    }
+
+    // Buscar configuração de proxy
+    const proxyAgent = await createProxyAgent();
+    
+    console.log(`🔍 [CNPJ] Consultando CNPJ: ${cnpjLimpo}${proxyAgent ? ' (via proxy)' : ''}`);
+
+    const resultado = await consultarCnpjComFallback(cnpjLimpo, proxyAgent);
+    res.json(resultado);
+  } catch (error: any) {
+    console.error('❌ [CNPJ] Erro:', error.message);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/api/consultar-cnpj', authenticate, async (req: any, res) => {
   try {
     const { cnpj } = req.body;

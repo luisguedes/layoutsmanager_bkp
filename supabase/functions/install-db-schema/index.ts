@@ -560,7 +560,7 @@ VALUES ('proxy_config', '{"enabled": false, "protocol": "http", "host": "", "por
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO public.system_config (key, value)
-VALUES ('company_config', '{"name": "", "razaoSocial": "", "cnpj": "", "endereco": "", "cidade": "", "uf": "", "cep": "", "telefone": "", "email": "", "logo": ""}'::jsonb)
+VALUES ('company_config', '{"nome": "", "razao_social": "", "cnpj": "", "endereco": "", "cidade": "", "uf": "", "cep": "", "telefone": "", "email": "", "logo": "", "logo_dark": ""}'::jsonb)
 ON CONFLICT (key) DO NOTHING;
 
 INSERT INTO public.system_config (key, value)

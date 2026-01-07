@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useAuth } from "@/contexts/AuthContext";
 import { getApiUrl } from "@/lib/config";
@@ -19,7 +19,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { useToast } from "@/hooks/use-toast";
-import { Settings, Edit, Users, Globe, Loader2, CheckCircle2, XCircle, Building2, Upload, X, Cog, Download, FileText, Moon, Sun, Monitor } from "lucide-react";
+import { Settings, Edit, Users, Globe, Loader2, CheckCircle2, XCircle, Building2, Upload, X, Cog, Download, FileText, Moon, Sun, Search } from "lucide-react";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
 import { UserPermissionsDialog } from "@/components/UserPermissionsDialog";
@@ -27,6 +27,7 @@ import { EditUserDialog } from "@/components/EditUserDialog";
 import { useIsAdmin } from "@/hooks/useIsAdmin";
 import { maskPhone, maskCNPJ, maskCEP, unmask } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { ProxyTerminal } from "@/components/ProxyTerminal";
 
 const API_URL = getApiUrl();
 
@@ -55,12 +56,15 @@ interface CompanyConfig {
   razao_social: string;
   cnpj: string;
   endereco: string;
+  bairro: string;
+  numero: string;
   cidade: string;
   uf: string;
   cep: string;
   telefone: string;
   email: string;
   logo: string;
+  logo_dark: string;
 }
 
 // Audit Logs Table Component
@@ -197,14 +201,20 @@ export default function Configuracoes() {
     razao_social: "",
     cnpj: "",
     endereco: "",
+    bairro: "",
+    numero: "",
     cidade: "",
     uf: "",
     cep: "",
     telefone: "",
     email: "",
     logo: "",
+    logo_dark: "",
   });
   const logoInputRef = useRef<HTMLInputElement>(null);
+  const logoDarkInputRef = useRef<HTMLInputElement>(null);
+  const [loadingCep, setLoadingCep] = useState(false);
+  const [loadingCnpj, setLoadingCnpj] = useState(false);
 
   // Fetch users
   const { data: profiles, isLoading: loadingUsers } = useQuery({
@@ -255,14 +265,32 @@ export default function Configuracoes() {
   });
 
   // Update proxy state when data is fetched
-  if (savedProxyConfig && proxyConfig.host === "" && savedProxyConfig.host) {
-    setProxyConfig(savedProxyConfig);
-  }
+  useEffect(() => {
+    if (savedProxyConfig && savedProxyConfig.host) {
+      setProxyConfig(savedProxyConfig);
+    }
+  }, [savedProxyConfig]);
 
   // Update company state when data is fetched
-  if (savedCompanyConfig && companyConfig.nome === "" && savedCompanyConfig.nome) {
-    setCompanyConfig(savedCompanyConfig);
-  }
+  useEffect(() => {
+    if (savedCompanyConfig) {
+      setCompanyConfig({
+        nome: savedCompanyConfig.nome || "",
+        razao_social: savedCompanyConfig.razao_social || "",
+        cnpj: savedCompanyConfig.cnpj ? maskCNPJ(savedCompanyConfig.cnpj) : "",
+        endereco: savedCompanyConfig.endereco || "",
+        bairro: savedCompanyConfig.bairro || "",
+        numero: savedCompanyConfig.numero || "",
+        cidade: savedCompanyConfig.cidade || "",
+        uf: savedCompanyConfig.uf || "",
+        cep: savedCompanyConfig.cep ? maskCEP(savedCompanyConfig.cep) : "",
+        telefone: savedCompanyConfig.telefone ? maskPhone(savedCompanyConfig.telefone) : "",
+        email: savedCompanyConfig.email || "",
+        logo: savedCompanyConfig.logo || "",
+        logo_dark: savedCompanyConfig.logo_dark || "",
+      });
+    }
+  }, [savedCompanyConfig]);
 
   // Toggle user active mutation
   const toggleActiveMutation = useMutation({
@@ -336,6 +364,8 @@ export default function Configuracoes() {
         body: JSON.stringify({
           ...config,
           telefone: unmask(config.telefone),
+          cnpj: unmask(config.cnpj),
+          cep: unmask(config.cep),
         }),
       });
       
@@ -344,6 +374,7 @@ export default function Configuracoes() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["company-config"] });
+      queryClient.invalidateQueries({ queryKey: ["company-logo"] });
       toast({
         title: "Dados da empresa salvos",
         description: "As informações foram atualizadas com sucesso.",
@@ -388,7 +419,7 @@ export default function Configuracoes() {
     }
   };
 
-  // Handle logo upload
+  // Handle logo upload (light theme)
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -408,6 +439,120 @@ export default function Configuracoes() {
       setCompanyConfig({ ...companyConfig, logo: base64 });
     };
     reader.readAsDataURL(file);
+  };
+
+  // Handle logo upload (dark theme)
+  const handleLogoDarkUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast({
+        title: "Arquivo muito grande",
+        description: "O logo deve ter no máximo 2MB.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64 = event.target?.result as string;
+      setCompanyConfig({ ...companyConfig, logo_dark: base64 });
+    };
+    reader.readAsDataURL(file);
+  };
+
+  // Auto-fetch CEP data - triggered on blur
+  const consultarCep = async () => {
+    const cepLimpo = companyConfig.cep.replace(/\D/g, '');
+    if (cepLimpo.length !== 8) return;
+
+    setLoadingCep(true);
+    try {
+      const response = await fetch(`${API_URL}/consultar-cep/${cepLimpo}`, {
+        headers: {
+          'Authorization': `Bearer ${session?.token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCompanyConfig(prev => ({
+          ...prev,
+          endereco: data.endereco || prev.endereco,
+          bairro: data.bairro || prev.bairro,
+          cidade: data.cidade || prev.cidade,
+          uf: data.uf || prev.uf,
+        }));
+        toast({
+          title: "CEP encontrado",
+          description: `${data.cidade} - ${data.uf}`,
+        });
+      } else {
+        toast({
+          title: "CEP não encontrado",
+          description: "Verifique o CEP informado",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao consultar CEP:', error);
+    } finally {
+      setLoadingCep(false);
+    }
+  };
+
+  // Consultar CNPJ
+  const consultarCnpj = async () => {
+    const cnpjLimpo = companyConfig.cnpj.replace(/\D/g, '');
+    if (cnpjLimpo.length !== 14) return;
+
+    setLoadingCnpj(true);
+    try {
+      const response = await fetch(`${API_URL}/consultar-cnpj/${cnpjLimpo}`, {
+        headers: {
+          'Authorization': `Bearer ${session?.token}`,
+        },
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setCompanyConfig(prev => ({
+          ...prev,
+          nome: data.fantasia || data.nome || prev.nome,
+          razao_social: data.nome || prev.razao_social,
+          endereco: data.logradouro || prev.endereco,
+          numero: data.numero || prev.numero,
+          bairro: data.bairro || prev.bairro,
+          cidade: data.municipio || prev.cidade,
+          uf: data.uf || prev.uf,
+          cep: data.cep ? maskCEP(data.cep.replace(/\D/g, '')) : prev.cep,
+          telefone: data.telefone ? maskPhone(data.telefone.replace(/\D/g, '')) : prev.telefone,
+          email: data.email || prev.email,
+        }));
+        toast({
+          title: "CNPJ encontrado",
+          description: `${data.nome}`,
+        });
+      } else {
+        const errorData = await response.json();
+        toast({
+          title: "CNPJ não encontrado",
+          description: errorData.error || "Verifique o CNPJ informado",
+          variant: "destructive",
+        });
+      }
+    } catch (error) {
+      console.error('Erro ao consultar CNPJ:', error);
+      toast({
+        title: "Erro ao consultar CNPJ",
+        description: "Tente novamente mais tarde",
+        variant: "destructive",
+      });
+    } finally {
+      setLoadingCnpj(false);
+    }
   };
 
   return (
@@ -457,49 +602,104 @@ export default function Configuracoes() {
                 </div>
               ) : (
                 <>
-                  {/* Logo Upload */}
-                  <div className="space-y-2">
-                    <Label>Logo da Empresa</Label>
-                    <div className="flex items-center gap-4">
-                      {companyConfig.logo ? (
-                        <div className="relative">
-                          <img
-                            src={companyConfig.logo}
-                            alt="Logo da empresa"
-                            className="h-24 w-24 object-contain rounded-lg border bg-muted p-2"
+                  {/* Logo Upload - Light Theme */}
+                  <div className="grid gap-6 md:grid-cols-2">
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2">
+                        <Sun className="h-4 w-4" />
+                        Logo (Tema Claro)
+                      </Label>
+                      <div className="flex items-center gap-4">
+                        {companyConfig.logo ? (
+                          <div className="relative">
+                            <img
+                              src={companyConfig.logo}
+                              alt="Logo da empresa (claro)"
+                              className="h-24 w-24 object-contain rounded-lg border bg-white p-2"
+                            />
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              className="absolute -top-2 -right-2 h-6 w-6"
+                              onClick={() => setCompanyConfig({ ...companyConfig, logo: "" })}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="h-24 w-24 rounded-lg border-2 border-dashed border-muted-foreground/25 flex items-center justify-center bg-white">
+                            <Building2 className="h-8 w-8 text-muted-foreground/50" />
+                          </div>
+                        )}
+                        <div>
+                          <input
+                            ref={logoInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleLogoUpload}
+                            className="hidden"
                           />
                           <Button
-                            variant="destructive"
-                            size="icon"
-                            className="absolute -top-2 -right-2 h-6 w-6"
-                            onClick={() => setCompanyConfig({ ...companyConfig, logo: "" })}
+                            variant="outline"
+                            onClick={() => logoInputRef.current?.click()}
                           >
-                            <X className="h-3 w-3" />
+                            <Upload className="h-4 w-4 mr-2" />
+                            {companyConfig.logo ? "Alterar" : "Carregar"}
                           </Button>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Para fundo claro
+                          </p>
                         </div>
-                      ) : (
-                        <div className="h-24 w-24 rounded-lg border-2 border-dashed border-muted-foreground/25 flex items-center justify-center bg-muted">
-                          <Building2 className="h-8 w-8 text-muted-foreground/50" />
+                      </div>
+                    </div>
+
+                    {/* Logo Upload - Dark Theme */}
+                    <div className="space-y-2">
+                      <Label className="flex items-center gap-2">
+                        <Moon className="h-4 w-4" />
+                        Logo (Tema Escuro)
+                      </Label>
+                      <div className="flex items-center gap-4">
+                        {companyConfig.logo_dark ? (
+                          <div className="relative">
+                            <img
+                              src={companyConfig.logo_dark}
+                              alt="Logo da empresa (escuro)"
+                              className="h-24 w-24 object-contain rounded-lg border bg-zinc-900 p-2"
+                            />
+                            <Button
+                              variant="destructive"
+                              size="icon"
+                              className="absolute -top-2 -right-2 h-6 w-6"
+                              onClick={() => setCompanyConfig({ ...companyConfig, logo_dark: "" })}
+                            >
+                              <X className="h-3 w-3" />
+                            </Button>
+                          </div>
+                        ) : (
+                          <div className="h-24 w-24 rounded-lg border-2 border-dashed border-muted-foreground/25 flex items-center justify-center bg-zinc-900">
+                            <Building2 className="h-8 w-8 text-zinc-600" />
+                          </div>
+                        )}
+                        <div>
+                          <input
+                            ref={logoDarkInputRef}
+                            type="file"
+                            accept="image/*"
+                            onChange={handleLogoDarkUpload}
+                            className="hidden"
+                          />
+                          <Button
+                            variant="outline"
+                            onClick={() => logoDarkInputRef.current?.click()}
+                          >
+                            <Upload className="h-4 w-4 mr-2" />
+                            {companyConfig.logo_dark ? "Alterar" : "Carregar"}
+                          </Button>
+                          <p className="text-xs text-muted-foreground mt-1">
+                            Para fundo escuro
+                          </p>
                         </div>
-                      )}
-                      <div>
-                        <input
-                          ref={logoInputRef}
-                          type="file"
-                          accept="image/*"
-                          onChange={handleLogoUpload}
-                          className="hidden"
-                        />
-                        <Button
-                          variant="outline"
-                          onClick={() => logoInputRef.current?.click()}
-                        >
-                          <Upload className="h-4 w-4 mr-2" />
-                          {companyConfig.logo ? "Alterar Logo" : "Carregar Logo"}
-                        </Button>
-                        <p className="text-xs text-muted-foreground mt-1">
-                          PNG, JPG ou SVG. Máximo 2MB.
-                        </p>
                       </div>
                     </div>
                   </div>
@@ -531,14 +731,35 @@ export default function Configuracoes() {
 
                     <div className="space-y-2">
                       <Label htmlFor="company-cnpj">CNPJ</Label>
-                      <Input
-                        id="company-cnpj"
-                        placeholder="00.000.000/0000-00"
-                        value={companyConfig.cnpj}
-                        onChange={(e) =>
-                          setCompanyConfig({ ...companyConfig, cnpj: maskCNPJ(e.target.value) })
-                        }
-                      />
+                      <div className="flex gap-2">
+                        <div className="relative flex-1">
+                          <Input
+                            id="company-cnpj"
+                            placeholder="00.000.000/0000-00"
+                            value={companyConfig.cnpj}
+                            onChange={(e) =>
+                              setCompanyConfig({ ...companyConfig, cnpj: maskCNPJ(e.target.value) })
+                            }
+                          />
+                          {loadingCnpj && (
+                            <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                            </div>
+                          )}
+                        </div>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          onClick={consultarCnpj}
+                          disabled={loadingCnpj || companyConfig.cnpj.replace(/\D/g, '').length !== 14}
+                        >
+                          <Search className="h-4 w-4 mr-2" />
+                          Consultar
+                        </Button>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Clique em "Consultar" para preencher os dados automaticamente
+                      </p>
                     </div>
 
                     <div className="space-y-2">
@@ -568,24 +789,59 @@ export default function Configuracoes() {
 
                     <div className="space-y-2">
                       <Label htmlFor="company-cep">CEP</Label>
+                      <div className="relative">
+                        <Input
+                          id="company-cep"
+                          placeholder="00000-000"
+                          value={companyConfig.cep}
+                          onChange={(e) =>
+                            setCompanyConfig({ ...companyConfig, cep: maskCEP(e.target.value) })
+                          }
+                          onBlur={consultarCep}
+                        />
+                        {loadingCep && (
+                          <div className="absolute right-3 top-1/2 -translate-y-1/2">
+                            <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                          </div>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        Ao sair do campo, o endereço será buscado automaticamente
+                      </p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="company-endereco">Endereço (Logradouro)</Label>
                       <Input
-                        id="company-cep"
-                        placeholder="00000-000"
-                        value={companyConfig.cep}
+                        id="company-endereco"
+                        placeholder="Rua, Avenida, etc."
+                        value={companyConfig.endereco}
                         onChange={(e) =>
-                          setCompanyConfig({ ...companyConfig, cep: maskCEP(e.target.value) })
+                          setCompanyConfig({ ...companyConfig, endereco: e.target.value })
                         }
                       />
                     </div>
 
-                    <div className="space-y-2 md:col-span-2">
-                      <Label htmlFor="company-endereco">Endereço</Label>
+                    <div className="space-y-2">
+                      <Label htmlFor="company-numero">Número</Label>
                       <Input
-                        id="company-endereco"
-                        placeholder="Rua, número, bairro"
-                        value={companyConfig.endereco}
+                        id="company-numero"
+                        placeholder="Número"
+                        value={companyConfig.numero}
                         onChange={(e) =>
-                          setCompanyConfig({ ...companyConfig, endereco: e.target.value })
+                          setCompanyConfig({ ...companyConfig, numero: e.target.value })
+                        }
+                      />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="company-bairro">Bairro</Label>
+                      <Input
+                        id="company-bairro"
+                        placeholder="Bairro"
+                        value={companyConfig.bairro}
+                        onChange={(e) =>
+                          setCompanyConfig({ ...companyConfig, bairro: e.target.value })
                         }
                       />
                     </div>
@@ -752,64 +1008,7 @@ export default function Configuracoes() {
 
         {/* System Tab */}
         <TabsContent value="sistema" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            {/* Theme Card */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Sun className="h-5 w-5" />
-                  Tema do Sistema
-                </CardTitle>
-                <CardDescription>
-                  Escolha o tema de cores para a interface
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="grid grid-cols-3 gap-3">
-                  <Button
-                    variant="outline"
-                    className="flex flex-col items-center gap-2 h-auto py-4"
-                    onClick={() => {
-                      document.documentElement.classList.remove('dark');
-                      localStorage.setItem('theme', 'light');
-                      toast({ title: "Tema claro ativado" });
-                    }}
-                  >
-                    <Sun className="h-6 w-6" />
-                    <span className="text-xs">Claro</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex flex-col items-center gap-2 h-auto py-4"
-                    onClick={() => {
-                      document.documentElement.classList.add('dark');
-                      localStorage.setItem('theme', 'dark');
-                      toast({ title: "Tema escuro ativado" });
-                    }}
-                  >
-                    <Moon className="h-6 w-6" />
-                    <span className="text-xs">Escuro</span>
-                  </Button>
-                  <Button
-                    variant="outline"
-                    className="flex flex-col items-center gap-2 h-auto py-4"
-                    onClick={() => {
-                      localStorage.removeItem('theme');
-                      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-                        document.documentElement.classList.add('dark');
-                      } else {
-                        document.documentElement.classList.remove('dark');
-                      }
-                      toast({ title: "Tema do sistema ativado" });
-                    }}
-                  >
-                    <Monitor className="h-6 w-6" />
-                    <span className="text-xs">Sistema</span>
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
+          <div className="grid gap-4 md:grid-cols-1">
             {/* Backup Card */}
             <Card>
               <CardHeader>
@@ -914,145 +1113,207 @@ export default function Configuracoes() {
 
         {/* Proxy Tab */}
         <TabsContent value="proxy" className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle>Configuração de Proxy</CardTitle>
-              <CardDescription>
-                Configure o proxy para acesso a APIs externas (como consulta de CNPJ).
-                Útil quando o ambiente necessita de proxy para acessar a internet.
-              </CardDescription>
+          {/* Info Card - Environment Guide */}
+          <Card className="border-blue-200 dark:border-blue-800 bg-blue-50/50 dark:bg-blue-950/20">
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base flex items-center gap-2">
+                <svg className="h-5 w-5 text-blue-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Guia de Configuração por Ambiente
+              </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-6">
-              {loadingProxy ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-6 w-6 animate-spin" />
+            <CardContent className="pt-0">
+              <div className="grid md:grid-cols-2 gap-4 text-sm">
+                <div className="space-y-2">
+                  <div className="font-medium flex items-center gap-2">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-blue-100 dark:bg-blue-900 text-blue-700 dark:text-blue-300 text-xs font-bold">D</span>
+                    Docker
+                  </div>
+                  <ul className="space-y-1 text-muted-foreground ml-8">
+                    <li>• Use o <strong>IP real</strong> do servidor proxy (ex: 192.168.0.239)</li>
+                    <li>• Nunca use <code className="text-xs bg-muted px-1 rounded">localhost</code> ou <code className="text-xs bg-muted px-1 rounded">127.0.0.1</code></li>
+                    <li>• Configure também via <code className="text-xs bg-muted px-1 rounded">.env</code>: PROXY_HOST, PROXY_PORT</li>
+                    <li>• O proxy é usado pelo container backend, não pelo frontend</li>
+                  </ul>
                 </div>
-              ) : (
-                <>
-                  <div className="flex items-center space-x-2">
-                    <Switch
-                      id="proxy-enabled"
-                      checked={proxyConfig.enabled}
-                      onCheckedChange={(checked) =>
-                        setProxyConfig({ ...proxyConfig, enabled: checked })
-                      }
-                    />
-                    <Label htmlFor="proxy-enabled">
-                      Habilitar Proxy
-                    </Label>
+                <div className="space-y-2">
+                  <div className="font-medium flex items-center gap-2">
+                    <span className="inline-flex items-center justify-center w-6 h-6 rounded bg-green-100 dark:bg-green-900 text-green-700 dark:text-green-300 text-xs font-bold">S</span>
+                    Standalone
                   </div>
-
-                  {proxyConfig.enabled && (
-                    <div className="grid gap-4 md:grid-cols-2">
-                      <div className="space-y-2">
-                        <Label htmlFor="proxy-protocol">Protocolo</Label>
-                        <select
-                          id="proxy-protocol"
-                          value={proxyConfig.protocol}
-                          onChange={(e) =>
-                            setProxyConfig({ ...proxyConfig, protocol: e.target.value })
-                          }
-                          className="w-full h-10 px-3 rounded-md border border-input bg-background"
-                        >
-                          <option value="http">HTTP</option>
-                          <option value="https">HTTPS</option>
-                          <option value="socks5">SOCKS5</option>
-                        </select>
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="proxy-host">Host do Proxy</Label>
-                        <Input
-                          id="proxy-host"
-                          placeholder="proxy.empresa.com.br"
-                          value={proxyConfig.host}
-                          onChange={(e) =>
-                            setProxyConfig({ ...proxyConfig, host: e.target.value })
-                          }
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="proxy-port">Porta</Label>
-                        <Input
-                          id="proxy-port"
-                          placeholder="3128"
-                          value={proxyConfig.port}
-                          onChange={(e) =>
-                            setProxyConfig({ ...proxyConfig, port: e.target.value })
-                          }
-                        />
-                      </div>
-
-                      <div className="space-y-2">
-                        <Label htmlFor="proxy-username">Usuário (opcional)</Label>
-                        <Input
-                          id="proxy-username"
-                          placeholder="usuario"
-                          value={proxyConfig.username}
-                          onChange={(e) =>
-                            setProxyConfig({ ...proxyConfig, username: e.target.value })
-                          }
-                        />
-                      </div>
-
-                      <div className="space-y-2 md:col-span-2">
-                        <Label htmlFor="proxy-password">Senha (opcional)</Label>
-                        <Input
-                          id="proxy-password"
-                          type="password"
-                          placeholder="••••••••"
-                          value={proxyConfig.password}
-                          onChange={(e) =>
-                            setProxyConfig({ ...proxyConfig, password: e.target.value })
-                          }
-                        />
-                      </div>
-                    </div>
-                  )}
-
-                  {proxyTestResult && (
-                    <div
-                      className={`flex items-center gap-2 p-3 rounded-lg ${
-                        proxyTestResult.success
-                          ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
-                          : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
-                      }`}
-                    >
-                      {proxyTestResult.success ? (
-                        <CheckCircle2 className="h-5 w-5" />
-                      ) : (
-                        <XCircle className="h-5 w-5" />
-                      )}
-                      <span>{proxyTestResult.message}</span>
-                    </div>
-                  )}
-
-                  <div className="flex gap-3">
-                    {proxyConfig.enabled && (
-                      <Button
-                        variant="outline"
-                        onClick={testProxyConnection}
-                        disabled={testingProxy || !proxyConfig.host || !proxyConfig.port}
-                      >
-                        {testingProxy && <Loader2 className="h-4 w-4 animate-spin mr-2" />}
-                        Testar Conexão
-                      </Button>
-                    )}
-                    <Button
-                      onClick={() => saveProxyMutation.mutate(proxyConfig)}
-                      disabled={saveProxyMutation.isPending}
-                    >
-                      {saveProxyMutation.isPending && (
-                        <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                      )}
-                      Salvar Configurações
-                    </Button>
-                  </div>
-                </>
-              )}
+                  <ul className="space-y-1 text-muted-foreground ml-8">
+                    <li>• Pode usar <code className="text-xs bg-muted px-1 rounded">localhost</code> se o proxy estiver na mesma máquina</li>
+                    <li>• Ou use o IP do servidor de proxy na rede</li>
+                    <li>• A configuração é salva no banco de dados</li>
+                    <li>• Não precisa reiniciar a aplicação após alterações</li>
+                  </ul>
+                </div>
+              </div>
+              <div className="mt-4 p-3 bg-muted/50 rounded-lg text-xs text-muted-foreground">
+                <strong>Dica:</strong> O tipo de proxy <strong>HTTP</strong> é recomendado para a maioria dos casos. 
+                Ele suporta tanto tráfego HTTP quanto HTTPS através do método CONNECT (tunneling). 
+                Proxies corporativos como Squid geralmente usam HTTP na porta 3128.
+              </div>
             </CardContent>
           </Card>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            {/* Configuration Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Configuração de Proxy</CardTitle>
+                <CardDescription>
+                  Configure o proxy para acesso a APIs externas (como consulta de CNPJ).
+                  Compatível com ambientes Docker e Standalone.
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="space-y-6">
+                {loadingProxy ? (
+                  <div className="flex items-center justify-center py-8">
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  </div>
+                ) : (
+                  <>
+                    <div className="flex items-center space-x-2">
+                      <Switch
+                        id="proxy-enabled"
+                        checked={proxyConfig.enabled}
+                        onCheckedChange={(checked) =>
+                          setProxyConfig({ ...proxyConfig, enabled: checked })
+                        }
+                      />
+                      <Label htmlFor="proxy-enabled">
+                        Habilitar Proxy
+                      </Label>
+                    </div>
+
+                    {proxyConfig.enabled && (
+                      <div className="grid gap-4 md:grid-cols-2">
+                        <div className="space-y-2">
+                          <Label htmlFor="proxy-protocol">Tipo de Proxy</Label>
+                          <select
+                            id="proxy-protocol"
+                            value={proxyConfig.protocol}
+                            onChange={(e) =>
+                              setProxyConfig({ ...proxyConfig, protocol: e.target.value })
+                            }
+                            className="w-full h-10 px-3 rounded-md border border-input bg-background"
+                          >
+                            <option value="http">HTTP (Recomendado)</option>
+                            <option value="https">HTTPS</option>
+                            <option value="socks5">SOCKS5</option>
+                          </select>
+                          <p className="text-xs text-muted-foreground">
+                            <strong>HTTP</strong>: Suporta HTTP e HTTPS (via CONNECT tunnel). Padrão para Squid e proxies corporativos.
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="proxy-host">Host do Proxy</Label>
+                          <Input
+                            id="proxy-host"
+                            placeholder="proxy.empresa.com.br ou 192.168.1.1"
+                            value={proxyConfig.host}
+                            onChange={(e) =>
+                              setProxyConfig({ ...proxyConfig, host: e.target.value })
+                            }
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Em Docker, use o IP real do servidor (não localhost)
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="proxy-port">Porta</Label>
+                          <Input
+                            id="proxy-port"
+                            placeholder="3128"
+                            value={proxyConfig.port}
+                            onChange={(e) =>
+                              setProxyConfig({ ...proxyConfig, port: e.target.value })
+                            }
+                          />
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label htmlFor="proxy-username">Usuário (opcional)</Label>
+                          <Input
+                            id="proxy-username"
+                            placeholder="usuario"
+                            value={proxyConfig.username}
+                            onChange={(e) =>
+                              setProxyConfig({ ...proxyConfig, username: e.target.value })
+                            }
+                          />
+                        </div>
+
+                        <div className="space-y-2 md:col-span-2">
+                          <Label htmlFor="proxy-password">Senha (opcional)</Label>
+                          <Input
+                            id="proxy-password"
+                            type="password"
+                            placeholder="••••••••"
+                            value={proxyConfig.password}
+                            onChange={(e) =>
+                              setProxyConfig({ ...proxyConfig, password: e.target.value })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {proxyTestResult && (
+                      <div
+                        className={`flex items-center gap-2 p-3 rounded-lg ${
+                          proxyTestResult.success
+                            ? "bg-green-50 text-green-700 dark:bg-green-950 dark:text-green-300"
+                            : "bg-red-50 text-red-700 dark:bg-red-950 dark:text-red-300"
+                        }`}
+                      >
+                        {proxyTestResult.success ? (
+                          <CheckCircle2 className="h-5 w-5" />
+                        ) : (
+                          <XCircle className="h-5 w-5" />
+                        )}
+                        <span>{proxyTestResult.message}</span>
+                      </div>
+                    )}
+
+                    <div className="flex gap-3">
+                      <Button
+                        onClick={() => saveProxyMutation.mutate(proxyConfig)}
+                        disabled={saveProxyMutation.isPending}
+                      >
+                        {saveProxyMutation.isPending && (
+                          <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                        )}
+                        Salvar Configurações
+                      </Button>
+                    </div>
+                  </>
+                )}
+              </CardContent>
+            </Card>
+
+            {/* Diagnostic Terminal Card */}
+            <Card>
+              <CardHeader>
+                <CardTitle>Diagnóstico de Conexão</CardTitle>
+                <CardDescription>
+                  Execute testes de conectividade para verificar se o proxy está funcionando corretamente
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <ProxyTerminal 
+                  proxyConfig={proxyConfig}
+                  onTestComplete={(success, message) => {
+                    setProxyTestResult({ success, message });
+                  }}
+                />
+              </CardContent>
+            </Card>
+          </div>
         </TabsContent>
       </Tabs>
 
